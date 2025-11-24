@@ -1,0 +1,21 @@
+[package]
+name = "pce"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+audio-sdl = ["sdl2"]
+video-sdl = ["sdl2"]
+trace_hw_writes = []
+
+[dependencies]
+sdl2 = { version = "0.36", features = ["bundled"], optional = true }
+
+[[example]]
+name = "audio_sdl"
+required-features = ["audio-sdl"]
+
+[[example]]
+name = "video_sdl"
+required-features = ["video-sdl"]
