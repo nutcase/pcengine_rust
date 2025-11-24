@@ -1589,7 +1589,12 @@ impl Bus {
     }
 
     fn env_route_02xx_hw() -> bool {
-        std::env::var("PCE_ROUTE_02XX_HW").is_ok()
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| match std::env::var("PCE_ROUTE_02XX_HW") {
+            Ok(v) if v == "0" => false,
+            _ => true, // default: route 0x0200–0x021F to hardware
+        })
     }
 
     fn normalized_io_offset(offset: usize) -> usize {
@@ -1748,10 +1753,12 @@ impl Bus {
             eprintln!("  HW page data write {:04X} -> {:02X}", offset, value);
         }
         match offset {
-            0x0400..=0x07FF => {
+            // VCE mirrors also appear at 0x1C40–0x1C43 in some docs; treat them the same.
+            0x0400..=0x07FF | 0x1C40..=0x1C47 => {
                 let sub = (offset & 0x0003) as u16;
                 self.write_vce_port(sub, value);
             }
+            // PSG mirrors at 0x1C60–0x1C63.
             0x0800..=0x0BFF | 0x1C60..=0x1C63 => match offset & 0x03 {
                 0x00 => self.psg.write_address(value),
                 0x01 => self.psg.write_data(value),
