@@ -51,6 +51,7 @@ Controls in `video_sdl`:
 - Quit: `Esc`
 
 State files are persisted under `states/<rom_name>.slotN.state`.
+`video_sdl` 起動中のみ有効で、スロットは `0` から `9` です。
 
 ## Build Notes
 - `sdl2` is built with the `bundled` feature.
@@ -70,6 +71,6 @@ cargo run --example trace_boot -- roms/<game>.pce
 ## Known Limitations
 - Audio timing/mixing is still being tuned; BGM tempo stability and residual noise are under active investigation.
 - Some VDC edge cases (exact per-line behaviour and game-specific quirks) are still being refined.
-- CD-ROM subsystem, debugger UI, and save states are not implemented yet.
+- CD-ROM subsystem and debugger UI are not implemented yet.
 
 See `TODO.md` for the detailed roadmap and current priorities.
