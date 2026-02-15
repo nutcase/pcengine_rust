@@ -1377,6 +1377,14 @@ impl Bus {
         self.vdc.scanline
     }
 
+    pub fn vdc_in_vblank(&self) -> bool {
+        self.vdc.in_vblank
+    }
+
+    pub fn vdc_busy_cycles(&self) -> u32 {
+        self.vdc.busy_cycles
+    }
+
     pub fn vdc_map_dimensions(&self) -> (usize, usize) {
         self.vdc.map_dimensions()
     }
@@ -1838,12 +1846,24 @@ impl Bus {
         std::mem::take(&mut self.vdc.vram_write_log)
     }
 
+    pub fn vdc_write_log_len(&self) -> usize {
+        self.vdc.vram_write_log.len()
+    }
+
     pub fn vdc_control_write_count(&self) -> u64 {
         self.vdc.control_write_count()
     }
 
     pub fn vdc_last_control(&self) -> u16 {
         self.vdc.last_control_value()
+    }
+
+    pub fn vdc_control_register(&self) -> u16 {
+        self.vdc.control()
+    }
+
+    pub fn vdc_mawr(&self) -> u16 {
+        self.vdc.mawr
     }
 
     pub fn vdc_satb_pending(&self) -> bool {
@@ -1868,6 +1888,14 @@ impl Bus {
 
     pub fn vdc_scroll_line_valid(&self, line: usize) -> bool {
         self.vdc.scroll_line_valid(line)
+    }
+
+    pub fn vdc_scroll_line_y_offset(&self, line: usize) -> u16 {
+        if line < self.vdc.scroll_line_y_offset.len() {
+            self.vdc.scroll_line_y_offset[line]
+        } else {
+            0
+        }
     }
 
     pub fn vdc_line_state_index_for_row(&self, row: usize) -> usize {
@@ -3700,7 +3728,10 @@ impl Vdc {
         let vds = ((vpr >> 8) & 0x00FF) as usize;
         let vdw = self.registers[0x0D];
         let vcr = self.registers[0x0E];
-        let active_start_line = (vsw + vds) % lines_per_frame;
+        // HuC6270 datasheet: VSW register = desired_value - 1,
+        // VDS register = desired_value - 2.  MAME huc6270.cpp uses
+        // (vsw + 1) + (vds + 2) for the first active scanline.
+        let active_start_line = (vsw + 1 + vds + 2) % lines_per_frame;
         let active_line_count = ((vdw & 0x01FF) as usize)
             .saturating_add(1)
             .max(1)
@@ -3795,6 +3826,18 @@ impl Vdc {
                 break;
             }
             self.phi_scaled -= frame_cycles;
+
+            // If the previous iteration broke for RCR, the current scanline
+            // was not yet latched.  Latch it now — the CPU ISR has had a
+            // chance to modify BXR/BYR since the break, so the RCR scanline
+            // picks up the post-ISR scroll values.
+            {
+                let sl = self.scanline as usize;
+                if sl < self.scroll_line_valid.len() && !self.scroll_line_valid[sl] {
+                    self.latch_line_state(sl);
+                }
+            }
+
             let wrapped = self.advance_scanline();
             if wrapped {
                 irq_recalc = true;
@@ -3812,14 +3855,16 @@ impl Vdc {
                     if self.control() & 0x0004 != 0 {
                         self.raise_status(VDC_STATUS_RCR);
                         irq_recalc = true;
-                        // Break out of the scanline loop so the CPU can
-                        // process the RCR interrupt (e.g. update BXR/BYR
-                        // for split-screen scrolling) before we latch
-                        // scroll values for subsequent scanlines.
+                        // Break WITHOUT latching — the CPU ISR will modify
+                        // BXR/BYR, and we latch this scanline on re-entry
+                        // (see needs_latch check above).
                         break;
                     }
                 }
             }
+
+            // Normal path: latch line state for the new scanline.
+            self.latch_line_state(self.scanline as usize);
 
             if self.scanline == self.vblank_start_scanline() {
                 self.in_vblank = true;
@@ -3990,12 +4035,10 @@ impl Vdc {
     }
 
     fn write_data_high(&mut self, value: u8) {
-        let target_reg = self
-            .pending_write_register
-            .unwrap_or_else(|| self.selected_register());
-        // Prefer the latched low byte when a prior write captured one (even if
-        // ST0 was re-written in between); otherwise, fall back to the current
-        // register value to avoid clobbering the low byte on high-only writes.
+        // HuC6270: the address register (AR) at the time of the ST2 write
+        // determines which VDC register receives the 16-bit value.  The
+        // pending_write_register is only used to detect whether a low-byte
+        // latch is available (i.e. ST1 preceded this ST2).
         let use_latch = matches!(self.write_phase, VdcWritePhase::High)
             && self.pending_write_register.is_some();
         if use_latch && self.ignore_next_high_byte {
@@ -4015,7 +4058,10 @@ impl Vdc {
                 .to_le_bytes()[0]
         };
         let combined = u16::from_le_bytes([low, value]);
-        let index = self.pending_write_register.take().unwrap_or(target_reg) as usize;
+        // Always use the CURRENT AR for the commit target — this matches
+        // real HuC6270 behaviour where AR at ST2 time selects the register.
+        let index = self.selected_register() as usize;
+        self.pending_write_register = None;
         if index == 0x02 {
             self.vram_data_high_writes = self.vram_data_high_writes.saturating_add(1);
             if !use_latch {
@@ -4284,30 +4330,32 @@ impl Vdc {
     }
 
     fn write_vram(&mut self, value: u16) {
-        let idx = (self.mawr as usize) & 0x7FFF;
+        let addr = self.mawr & 0x7FFF;
+
+        // Debug: range tracking and write log (always record, even if latched)
+        if addr >= self.vram_write_range_start && addr < self.vram_write_range_end {
+            self.vram_write_range_count = self.vram_write_range_count.saturating_add(1);
+        }
+        if self.vram_write_log.len() < self.vram_write_log_limit {
+            self.vram_write_log.push((addr, value));
+        }
+        #[cfg(feature = "trace_hw_writes")]
+        eprintln!("    VRAM[{:04X}] = {:04X}", addr, value);
+
+        let idx = addr as usize;
         if let Some(slot) = self.vram.get_mut(idx) {
             *slot = value;
         }
-        if (self.mawr & 0x7FFF) >= self.vram_write_range_start
-            && (self.mawr & 0x7FFF) < self.vram_write_range_end
-        {
-            self.vram_write_range_count = self.vram_write_range_count.saturating_add(1);
-        }
-        // Debug write log
-        if self.vram_write_log.len() < self.vram_write_log_limit {
-            self.vram_write_log.push((self.mawr & 0x7FFF, value));
-        }
-        // Mark BIOS font as dirty if the write hits the font tile VRAM area
-        // (tiles 0x120-0x17F = VRAM words 0x1200-0x17FF).
+        // Mark BIOS font as dirty if the write hits the font tile area
         if !self.bios_font_dirty && !self.bios_font_tiles.is_empty() {
-            let addr = idx as u16;
             if addr >= 0x1200 && addr < 0x1800 {
                 self.bios_font_dirty = true;
             }
         }
-        #[cfg(feature = "trace_hw_writes")]
-        eprintln!("    VRAM[{:04X}] = {:04X}", self.mawr & 0x7FFF, value);
         self.set_busy(VDC_BUSY_ACCESS_CYCLES);
+
+        // MAWR always advances immediately regardless of whether the
+        // write was committed or latched (real HW behaviour).
         self.mawr = (self.mawr.wrapping_add(self.increment_step())) & 0x7FFF;
         self.registers[0x00] = self.mawr;
         self.registers[0x02] = value;
@@ -4547,13 +4595,20 @@ impl Vdc {
             self.bg_y_offset_loaded = false;
             wrapped = true;
         }
-        self.latch_line_state(self.scanline as usize);
+        // Don't latch here — the tick() loop latches after the RCR check
+        // so that the CPU ISR can modify scroll registers before the
+        // RCR scanline's state is committed.  The scroll_line_valid array
+        // serves as the implicit "needs latch" flag: the new scanline's
+        // entry is still false (cleared on frame wrap), so the tick loop
+        // knows to latch it.
         wrapped
     }
 
     #[cfg(test)]
     fn advance_scanline_for_test(&mut self) {
         self.advance_scanline();
+        // Tests expect line state to be latched immediately after advancing.
+        self.latch_line_state(self.scanline as usize);
     }
 
     fn zoom_step_value(raw: u16) -> usize {
@@ -6011,17 +6066,20 @@ mod tests {
     }
 
     #[test]
-    fn register_select_between_low_and_high_keeps_low_target() {
+    fn register_select_between_low_and_high_uses_current_ar() {
         let mut vdc = Vdc::new();
 
-        vdc.write_select(0x07);
-        vdc.write_data_low(0x34);
-        // ST0 may be rewritten before ST2; high byte must still commit to R07.
-        vdc.write_select(0x08);
-        vdc.write_data_high_direct(0x12);
+        vdc.write_select(0x07); // AR = BXR
+        vdc.write_data_low(0x34); // BXR low byte committed immediately → BXR = 0x0034
+        // On real HuC6270, changing AR between ST1 and ST2 means the
+        // high-byte commit targets the NEW register, not the old one.
+        vdc.write_select(0x08); // AR = BYR
+        vdc.write_data_high_direct(0x12); // commits (latch=0x34, hi=0x12)=0x1234 to BYR
 
-        assert_eq!(vdc.registers[0x07], 0x1234 & 0x03FF);
-        assert_eq!(vdc.registers[0x08], 0x0000);
+        // BXR only received the low-byte commit (0x0034).
+        assert_eq!(vdc.registers[0x07], 0x0034);
+        // BYR received the full 16-bit value (masked to 9 bits).
+        assert_eq!(vdc.registers[0x08], 0x1234 & 0x01FF);
     }
 
     #[test]
@@ -6032,11 +6090,11 @@ mod tests {
         vdc.registers[0x0E] = 0x0003;
 
         let window = vdc.vertical_window();
-        assert_eq!(window.active_start_line, 0x11);
+        assert_eq!(window.active_start_line, 0x14);
         assert_eq!(window.active_line_count, 0x0F0);
         assert_eq!(window.post_active_overscan_lines, 6);
-        assert_eq!(window.vblank_start_line, 257);
-        assert_eq!(vdc.vblank_start_scanline(), 257);
+        assert_eq!(window.vblank_start_line, 260);
+        assert_eq!(vdc.vblank_start_scanline(), 260);
     }
 
     #[test]
@@ -6052,13 +6110,13 @@ mod tests {
                 "row {row} should be active in first display pass"
             );
         }
-        for row in 4..10 {
+        for row in 4..13 {
             assert!(
                 !vdc.output_row_in_active_window(row),
                 "row {row} should be overscan"
             );
         }
-        for row in 10..14 {
+        for row in 13..17 {
             assert!(
                 vdc.output_row_in_active_window(row),
                 "row {row} should be active after display-counter reset"
@@ -6069,13 +6127,13 @@ mod tests {
     #[test]
     fn line_state_index_tracks_vpr_active_start() {
         let mut vdc = Vdc::new();
-        vdc.registers[0x0C] = 0x0302; // VSW=2, VDS=3 => start line 5
+        vdc.registers[0x0C] = 0x0302; // VSW=2, VDS=3 => start line (2+1)+(3+2)=8
         vdc.registers[0x0D] = 0x0001;
 
-        assert_eq!(vdc.line_state_index_for_frame_row(0), 5);
+        assert_eq!(vdc.line_state_index_for_frame_row(0), 8);
         assert_eq!(
             vdc.line_state_index_for_frame_row(239),
-            (5 + 239) % (LINES_PER_FRAME as usize)
+            (8 + 239) % (LINES_PER_FRAME as usize)
         );
     }
 
@@ -6086,8 +6144,8 @@ mod tests {
         vdc.registers[0x0D] = 0x00EF;
         vdc.registers[0x0E] = 0x0003;
 
-        assert_eq!(vdc.rcr_scanline_for_target(0x0040), Some(17));
-        assert_eq!(vdc.rcr_scanline_for_target(0x0063), Some(52));
+        assert_eq!(vdc.rcr_scanline_for_target(0x0040), Some(20));
+        assert_eq!(vdc.rcr_scanline_for_target(0x0063), Some(55));
         // Legacy absolute-line path remains available for out-of-range values.
         assert_eq!(vdc.rcr_scanline_for_target(0x0002), Some(2));
     }
