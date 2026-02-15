@@ -1685,7 +1685,7 @@ impl Cpu {
 
     fn bsr(&mut self, bus: &mut Bus, cycles: u8) -> u8 {
         let offset = self.fetch_byte(bus) as i8;
-        let return_addr = self.pc;
+        let return_addr = self.pc.wrapping_sub(1);
         self.push_byte(bus, (return_addr >> 8) as u8);
         self.push_byte(bus, return_addr as u8);
         self.pc = ((self.pc as i32 + offset as i32) as u32) as u16;
@@ -2629,15 +2629,16 @@ mod tests {
 
     #[test]
     fn block_move_can_target_timer_io_registers() {
-        let program = block_transfer_program(0x73, 0x9000, 0xFF10, 0x0002);
+        let program = block_transfer_program(0x73, 0x9000, 0x0C00, 0x0002);
         let (mut cpu, mut bus) = setup_cpu_with_program(&program);
+        bus.set_mpr(0, 0xFF);
         bus.write(0x9000, 0x02); // timer reload
         bus.write(0x9001, 0x01); // timer start
 
         let cycles = cpu.step(&mut bus);
         assert_eq!(cycles, 17 + 6 * 2u32);
-        assert_eq!(bus.read(0xFF10), 0x02);
-        assert_eq!(bus.read(0xFF11) & 0x01, 0x01);
+        assert_eq!(bus.read(0x0C00), 0x02);
+        assert_eq!(bus.read(0x0C01) & 0x01, 0x01);
 
         // Confirm the timer side effect is live after DMA-style register writes.
         bus.tick(1024u32 * 3, true);
@@ -3119,6 +3120,9 @@ mod tests {
 
     #[test]
     fn bsr_pushes_return_address() {
+        // BSR pushes PC-1 (last byte of instruction), matching JSR/RTS convention.
+        // RTS adds 1 to popped address, so BSR at $8000 (2 bytes: 44 02)
+        // returns to $8002 (the byte after the BSR instruction).
         let program = [0x44, 0x02, 0x00, 0xEA, 0x00];
         let (mut cpu, mut bus) = setup_cpu_with_program(&program);
 
@@ -3128,7 +3132,7 @@ mod tests {
         assert_eq!(cpu.sp, 0xFB);
         let lo = bus.read(0x01FC);
         let hi = bus.read(0x01FD);
-        assert_eq!(lo, 0x02);
+        assert_eq!(lo, 0x01);
         assert_eq!(hi, 0x80);
     }
 

@@ -519,10 +519,13 @@ mod tests {
     #[test]
     fn wai_unblocks_when_timer_irq_fires() {
         let program = [
+            // Set MPR[0]=$FF for I/O access at $0000-$1FFF
+            0xA9, 0xFF, // LDA #$FF
+            0x53, 0x01, // TAM #$01 (MPR[0] = $FF)
             0xA9, 0x04, // LDA #$04 (timer reload)
-            0x8D, 0x10, 0xFF, // STA $FF10
+            0x8D, 0x00, 0x0C, // STA $0C00
             0xA9, 0x01, // LDA #$01 (start timer)
-            0x8D, 0x11, 0xFF, // STA $FF11
+            0x8D, 0x01, 0x0C, // STA $0C01
             0x58, // CLI
             0xCB, // WAI
             0x00, // BRK
@@ -535,7 +538,7 @@ mod tests {
 
         let mut emu = Emulator::new();
         emu.load_program(0x8000, &program);
-        emu.bus.write_u16(0xFFFA, 0x800D);
+        emu.bus.write_u16(0xFFFA, 0x8011);
         emu.reset();
 
         emu.run_until_halt(Some(2_000));

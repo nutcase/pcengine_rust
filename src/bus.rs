@@ -894,14 +894,6 @@ impl Bus {
                 return value;
             }
         }
-        if (0xFF00..=0xFF7F).contains(&addr) {
-            let offset = HW_CPU_CTRL_BASE + (addr - 0xFF00) as usize;
-            let value = self.read_io_internal(offset);
-            #[cfg(feature = "trace_hw_writes")]
-            Self::log_hw_access("R", addr, value);
-            self.refresh_vdc_irq();
-            return value;
-        }
         if let Some(index) = Self::mpr_index_for_addr(addr) {
             return self.mpr[index];
         }
@@ -988,14 +980,6 @@ impl Bus {
                 self.refresh_vdc_irq();
                 return;
             }
-        }
-        if (0xFF00..=0xFF7F).contains(&addr) {
-            let offset = HW_CPU_CTRL_BASE + (addr - 0xFF00) as usize;
-            self.write_io_internal(offset, value);
-            #[cfg(feature = "trace_hw_writes")]
-            Self::log_hw_access("W", addr, value);
-            self.refresh_vdc_irq();
-            return;
         }
         if let Some(index) = Self::mpr_index_for_addr(addr) {
             self.set_mpr(index, value);
@@ -1917,6 +1901,8 @@ impl Bus {
         }
     }
 
+    /// Map a $FF00-$FF7F address to the I/O page offset.
+    ///
     fn mpr_index_for_addr(addr: u16) -> Option<usize> {
         if !(0xFF80..=0xFFBF).contains(&addr) {
             return None;
@@ -2534,7 +2520,7 @@ impl Bus {
                         base: cart_page * PAGE_SIZE,
                     }
                 } else if rom_pages > 0 {
-                    let rom_page = logical % rom_pages;
+                    let rom_page = Self::mirror_rom_bank(logical, rom_pages);
                     BankMapping::Rom {
                         base: rom_page * PAGE_SIZE,
                     }
@@ -2557,6 +2543,38 @@ impl Bus {
 
     fn rom_pages(&self) -> usize {
         self.rom.len() / PAGE_SIZE
+    }
+
+    /// Map a logical ROM bank number to a physical ROM page, handling
+    /// mirroring for non-power-of-2 ROM sizes.
+    ///
+    /// For power-of-2 ROMs, simple modulo works.  For non-power-of-2 (e.g.
+    /// 384 KB = 48 banks), the PC Engine hardware splits the 128-bank
+    /// address space in half:
+    ///   Banks  0-63  → lower power-of-2 portion (e.g. 32 banks = 256 KB)
+    ///   Banks 64-127 → upper remainder        (e.g. 16 banks = 128 KB)
+    /// Each half mirrors within its own range.  Confirmed by Mednafen's
+    /// pce/huc.cpp for the m_len == 0x60000 case.
+    fn mirror_rom_bank(logical: usize, rom_pages: usize) -> usize {
+        if rom_pages == 0 {
+            return 0;
+        }
+        if rom_pages.is_power_of_two() {
+            return logical % rom_pages;
+        }
+        // Largest power-of-2 that fits inside rom_pages.
+        let lower = rom_pages.next_power_of_two() >> 1; // e.g. 32 for 48
+        let upper = rom_pages - lower; // e.g. 16 for 48
+
+        // Mask to 7-bit bank number (128 banks = 1 MB address space).
+        let bank = logical & 0x7F;
+        if bank < lower * 2 {
+            // Lower half: mirrors the first `lower` banks.
+            bank & (lower - 1)
+        } else {
+            // Upper half: mirrors the remaining `upper` banks.
+            (bank & (upper - 1)) + lower
+        }
     }
 
     fn cart_ram_pages(&self) -> usize {
@@ -2671,7 +2689,10 @@ impl Bus {
                 let sub = (offset & 0x0007) as u16;
                 self.read_vce_port(sub)
             }
-            0x0800..=0x0BFF | 0x1C60..=0x1C63 => match offset & 0x03 {
+            // HuC6280 PSG native map is direct registers at $0800-$080F.
+            0x0800..=0x0BFF => self.psg.read_direct(offset & 0x0F),
+            // Keep legacy 4-port mirror behavior for older tests/tooling.
+            0x1C60..=0x1C63 => match offset & 0x03 {
                 0x00 => self.psg.read_address(),
                 0x01 => self.io[offset],
                 0x02 => self.psg.read_data(),
@@ -2781,8 +2802,10 @@ impl Bus {
                 let sub = (offset & 0x0007) as u16;
                 self.write_vce_port(sub, value);
             }
-            // PSG mirrors at 0x1C60–0x1C63.
-            0x0800..=0x0BFF | 0x1C60..=0x1C63 => match offset & 0x03 {
+            // HuC6280 PSG native map is direct registers at $0800-$080F.
+            0x0800..=0x0BFF => self.psg.write_direct(offset & 0x0F, value),
+            // Keep legacy 4-port mirror behavior for older tests/tooling.
+            0x1C60..=0x1C63 => match offset & 0x03 {
                 0x00 => self.psg.write_address(value),
                 0x01 => self.psg.write_data(value),
                 _ => self.io[offset] = value,
@@ -4506,6 +4529,24 @@ impl Psg {
         value
     }
 
+    fn write_direct(&mut self, index: usize, value: u8) {
+        if index < PSG_REG_COUNT {
+            self.regs[index] = value;
+            self.write_register(index, value);
+        } else {
+            self.write_wave_ram(index - PSG_REG_COUNT, value);
+        }
+    }
+
+    fn read_direct(&mut self, index: usize) -> u8 {
+        if index < PSG_REG_COUNT {
+            self.regs[index]
+        } else {
+            let wave_index = index - PSG_REG_COUNT;
+            self.waveform_ram[wave_index % self.waveform_ram.len()]
+        }
+    }
+
     fn read_status(&mut self) -> u8 {
         let mut status = 0;
         if self.irq_pending {
@@ -4561,8 +4602,10 @@ impl Psg {
                 let sample = value & 0x1F;
                 if channel.control & PSG_CH_CTRL_DDA != 0 {
                     channel.dda_sample = sample;
-                } else if channel.control & PSG_CH_CTRL_KEY_ON == 0 {
-                    // Wave RAM writes are accepted only while channel enable and DDA are clear.
+                }
+                if channel.control & PSG_CH_CTRL_KEY_ON == 0 {
+                    // Games commonly upload wave tables with KEY OFF and DDA toggled.
+                    // Accept writes whenever KEY is off so both patterns work.
                     let write_pos = channel.wave_write_pos as usize & (PSG_WAVE_SIZE - 1);
                     let index = ch * PSG_WAVE_SIZE + write_pos;
                     self.waveform_ram[index] = sample;
@@ -5073,15 +5116,15 @@ mod tests {
     const VCE_ADDRESS_HIGH_ADDR: u16 = 0x0403;
     const VCE_DATA_ADDR: u16 = 0x0404;
     const VCE_DATA_HIGH_ADDR: u16 = 0x0405;
-    const PSG_ADDR_REG: u16 = 0x0800;
-    const PSG_WRITE_REG: u16 = 0x0801;
-    const PSG_READ_REG: u16 = 0x0802;
-    const PSG_STATUS_REG: u16 = 0x0803;
+    const PSG_ADDR_REG: u16 = 0x1C60;
+    const PSG_WRITE_REG: u16 = 0x1C61;
+    const PSG_READ_REG: u16 = 0x1C62;
+    const PSG_STATUS_REG: u16 = 0x1C63;
     const TIMER_STD_BASE: u16 = 0x0C00;
     const JOYPAD_BASE_ADDR: u16 = 0x1000;
     const IRQ_TIMER_BASE: u16 = 0x1400;
-    const CPU_IRQ_MASK: u16 = 0xFF12;
-    const CPU_IRQ_STATUS: u16 = 0xFF13;
+    const CPU_IRQ_MASK: u16 = 0x1402;
+    const CPU_IRQ_STATUS: u16 = 0x1403;
     const VDC_CTRL_DISPLAY_FULL: u16 = VDC_CTRL_ENABLE_BACKGROUND
         | VDC_CTRL_ENABLE_BACKGROUND_LEGACY
         | VDC_CTRL_ENABLE_SPRITES
@@ -5234,35 +5277,37 @@ mod tests {
     #[test]
     fn io_registers_round_trip_and_reset() {
         let mut bus = Bus::new();
-        assert_eq!(bus.read(0xFF20), 0);
-        assert_eq!(bus.read(0xFF7F), 0);
+        // Test I/O register round-trip via direct read_io/write_io
+        assert_eq!(bus.read_io(HW_CPU_CTRL_BASE + 0x20), 0);
+        assert_eq!(bus.read_io(HW_CPU_CTRL_BASE + 0x7F), 0);
 
-        bus.write(0xFF20, 0xAA);
-        assert_eq!(bus.read(0xFF20), 0xAA);
-        bus.write(0xFF7F, 0x55);
-        assert_eq!(bus.read(0xFF7F), 0x55);
+        bus.write_io(HW_CPU_CTRL_BASE + 0x20, 0xAA);
+        assert_eq!(bus.read_io(HW_CPU_CTRL_BASE + 0x20), 0xAA);
+        bus.write_io(HW_CPU_CTRL_BASE + 0x7F, 0x55);
+        assert_eq!(bus.read_io(HW_CPU_CTRL_BASE + 0x7F), 0x55);
 
         bus.write_io(HW_CPU_CTRL_BASE + 0x30, 0x42);
-        assert_eq!(bus.read(0xFF30), 0x42);
+        assert_eq!(bus.read_io(HW_CPU_CTRL_BASE + 0x30), 0x42);
 
         bus.clear();
-        assert_eq!(bus.read(0xFF20), 0x00);
-        assert_eq!(bus.read(0xFF30), 0x00);
-        assert_eq!(bus.read(0xFF7F), 0x00);
+        assert_eq!(bus.read_io(HW_CPU_CTRL_BASE + 0x20), 0x00);
+        assert_eq!(bus.read_io(HW_CPU_CTRL_BASE + 0x30), 0x00);
+        assert_eq!(bus.read_io(HW_CPU_CTRL_BASE + 0x7F), 0x00);
     }
 
     #[test]
     fn timer_borrow_sets_request_bit() {
         let mut bus = Bus::new();
-        bus.write(0xFF10, 0x02); // reload value
-        bus.write(0xFF11, TIMER_CONTROL_START);
+        bus.set_mpr(0, 0xFF);
+        bus.write(0x0C00, 0x02); // reload value
+        bus.write(0x0C01, TIMER_CONTROL_START);
 
         let fired = bus.tick(1024u32 * 3, true);
         assert!(fired);
-        assert_eq!(bus.read(0xFF13) & IRQ_REQUEST_TIMER, IRQ_REQUEST_TIMER);
+        assert_eq!(bus.read(0x1403) & IRQ_REQUEST_TIMER, IRQ_REQUEST_TIMER);
 
-        bus.write(0xFF13, IRQ_REQUEST_TIMER);
-        assert_eq!(bus.read(0xFF13) & IRQ_REQUEST_TIMER, 0);
+        bus.write(0x1403, IRQ_REQUEST_TIMER);
+        assert_eq!(bus.read(0x1403) & IRQ_REQUEST_TIMER, 0);
     }
 
     #[test]
@@ -6030,25 +6075,27 @@ mod tests {
     #[test]
     fn timer_disable_masks_irq_line() {
         let mut bus = Bus::new();
-        bus.write(0xFF10, 0x01);
-        bus.write(0xFF12, IRQ_DISABLE_TIMER);
-        bus.write(0xFF11, TIMER_CONTROL_START);
+        bus.set_mpr(0, 0xFF);
+        bus.write(0x0C00, 0x01);
+        bus.write(0x1402, IRQ_DISABLE_TIMER);
+        bus.write(0x0C01, TIMER_CONTROL_START);
 
         let fired = bus.tick(1024u32 * 2, true);
         assert!(!fired);
-        assert_eq!(bus.read(0xFF13) & IRQ_REQUEST_TIMER, IRQ_REQUEST_TIMER);
+        assert_eq!(bus.read(0x1403) & IRQ_REQUEST_TIMER, IRQ_REQUEST_TIMER);
 
-        bus.write(0xFF12, 0x00);
+        bus.write(0x1402, 0x00);
         assert!(bus.tick(0, true));
-        bus.write(0xFF13, IRQ_REQUEST_TIMER);
+        bus.write(0x1403, IRQ_REQUEST_TIMER);
         assert!(!bus.tick(0, true));
     }
 
     #[test]
     fn timer_uses_slow_clock_divider() {
         let mut bus = Bus::new();
-        bus.write(0xFF10, 0x00);
-        bus.write(0xFF11, TIMER_CONTROL_START);
+        bus.set_mpr(0, 0xFF);
+        bus.write(0x0C00, 0x00);
+        bus.write(0x0C01, TIMER_CONTROL_START);
 
         let fired = bus.tick(256u32, false);
         assert!(fired);
@@ -6160,6 +6207,17 @@ mod tests {
         bus.write(PSG_ADDR_REG, 0x02);
         assert_eq!(bus.read(PSG_READ_REG), 0x7F);
         assert_eq!(bus.read(PSG_STATUS_REG) & PSG_STATUS_IRQ, 0);
+    }
+
+    #[test]
+    fn hardware_page_psg_direct_register_map_is_available() {
+        let mut bus = Bus::new();
+        bus.set_mpr(0, 0xFF);
+
+        bus.write(0x0800, 0x02); // channel select
+        bus.write(0x0805, 0x7F); // channel balance for selected channel
+        assert_eq!(bus.psg.channels[2].balance, 0x7F);
+        assert_eq!(bus.read(0x0805), 0x7F);
     }
 
     #[test]
@@ -6746,6 +6804,7 @@ mod tests {
     #[test]
     fn vdc_status_interrupt_respects_control() {
         let mut bus = Bus::new();
+        bus.set_mpr(0, 0xFF);
         bus.set_mpr(1, 0xFF);
 
         // Enable VBlank IRQ (bit 3 of control register).
@@ -6754,12 +6813,12 @@ mod tests {
         bus.write_st_port(2, 0x00);
 
         bus.vdc_set_status_for_test(VDC_STATUS_VBL);
-        assert_eq!(bus.read(0xFF13) & IRQ_REQUEST_IRQ1, IRQ_REQUEST_IRQ1);
+        assert_eq!(bus.read(0x1403) & IRQ_REQUEST_IRQ1, IRQ_REQUEST_IRQ1);
 
         let status = bus.read(0x2000);
         assert_eq!(status & VDC_STATUS_VBL, VDC_STATUS_VBL);
-        bus.write(0xFF13, IRQ_REQUEST_IRQ1);
-        assert_eq!(bus.read(0xFF13) & IRQ_REQUEST_IRQ1, 0);
+        bus.write(0x1403, IRQ_REQUEST_IRQ1);
+        assert_eq!(bus.read(0x1403) & IRQ_REQUEST_IRQ1, 0);
 
         // Disable VBlank interrupt and ensure no IRQ is raised.
         bus.write_st_port(0, 0x05);
@@ -6767,9 +6826,9 @@ mod tests {
         bus.write_st_port(2, 0x00);
 
         bus.vdc_set_status_for_test(VDC_STATUS_VBL);
-        bus.write(0xFF13, IRQ_REQUEST_IRQ1);
+        bus.write(0x1403, IRQ_REQUEST_IRQ1);
         bus.vdc_set_status_for_test(VDC_STATUS_VBL);
-        assert_eq!(bus.read(0xFF13) & IRQ_REQUEST_IRQ1, 0);
+        assert_eq!(bus.read(0x1403) & IRQ_REQUEST_IRQ1, 0);
     }
 
     #[test]
@@ -7269,6 +7328,7 @@ mod tests {
     #[test]
     fn vdc_vblank_irq_fires_via_tick() {
         let mut bus = Bus::new();
+        bus.set_mpr(0, 0xFF);
         bus.set_mpr(1, 0xFF);
 
         // Enable VBlank IRQ.
@@ -7278,7 +7338,7 @@ mod tests {
 
         // Clear any pending VBlank from power-on state.
         bus.read_io(0x00);
-        bus.write(0xFF13, IRQ_REQUEST_IRQ1);
+        bus.write(0x1403, IRQ_REQUEST_IRQ1);
         let line_cycles =
             (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
         let visible_lines = VDC_VISIBLE_LINES as u32;
@@ -7298,19 +7358,20 @@ mod tests {
             trigger_iter >= min_expected && trigger_iter <= max_expected,
             "VBlank IRQ fired outside expected window: iter={trigger_iter}, min={min_expected}, max={max_expected}"
         );
-        assert_ne!(bus.read(0xFF13) & IRQ_REQUEST_IRQ1, 0);
+        assert_ne!(bus.read(0x1403) & IRQ_REQUEST_IRQ1, 0);
         let status = bus.read(0x2000);
         assert!(status & VDC_STATUS_VBL != 0);
-        bus.write(0xFF13, IRQ_REQUEST_IRQ1);
+        bus.write(0x1403, IRQ_REQUEST_IRQ1);
 
         // Low-speed mode should need 4x cycles (fresh bus to reset accumulator).
         let mut slow_bus = Bus::new();
+        slow_bus.set_mpr(0, 0xFF);
         slow_bus.set_mpr(1, 0xFF);
         slow_bus.write_st_port(0, 0x05);
         slow_bus.write_st_port(1, 0x08);
         slow_bus.write_st_port(2, 0x00);
         slow_bus.read_io(0x00);
-        slow_bus.write(0xFF13, IRQ_REQUEST_IRQ1);
+        slow_bus.write(0x1403, IRQ_REQUEST_IRQ1);
         let mut trigger_iter_slow = None;
         for iter in 0..(max_expected * 2) {
             if slow_bus.tick(1, false) {
@@ -7328,7 +7389,7 @@ mod tests {
             min_expected,
             max_expected
         );
-        assert_ne!(slow_bus.read(0xFF13) & IRQ_REQUEST_IRQ1, 0);
+        assert_ne!(slow_bus.read(0x1403) & IRQ_REQUEST_IRQ1, 0);
     }
 
     #[test]
@@ -7377,12 +7438,12 @@ mod tests {
     #[test]
     fn psg_irq2_triggers_when_enabled() {
         let mut bus = Bus::new();
-        bus.write(0xFF60, PSG_REG_TIMER_LO as u8);
-        bus.write(0xFF61, 0x20);
-        bus.write(0xFF60, PSG_REG_TIMER_HI as u8);
-        bus.write(0xFF61, 0x00);
-        bus.write(0xFF60, PSG_REG_TIMER_CTRL as u8);
-        bus.write(0xFF61, PSG_CTRL_ENABLE | PSG_CTRL_IRQ_ENABLE);
+        bus.write_io(0x1C60, PSG_REG_TIMER_LO as u8);
+        bus.write_io(0x1C61, 0x20);
+        bus.write_io(0x1C60, PSG_REG_TIMER_HI as u8);
+        bus.write_io(0x1C61, 0x00);
+        bus.write_io(0x1C60, PSG_REG_TIMER_CTRL as u8);
+        bus.write_io(0x1C61, PSG_CTRL_ENABLE | PSG_CTRL_IRQ_ENABLE);
 
         assert_eq!(bus.pending_interrupts() & IRQ_REQUEST_IRQ2, 0);
         for _ in 0..0x20 {
@@ -7397,24 +7458,24 @@ mod tests {
     fn psg_sample_uses_waveform_ram() {
         let mut bus = Bus::new();
 
-        bus.write(0xFF60, 0x00);
-        bus.write(0xFF61, 0x10);
-        bus.write(0xFF61, 0x01);
-        bus.write(0xFF61, 0x00);
-        bus.write(0xFF61, 0x1F);
+        bus.write_io(0x1C60, 0x00);
+        bus.write_io(0x1C61, 0x10);
+        bus.write_io(0x1C61, 0x01);
+        bus.write_io(0x1C61, 0x00);
+        bus.write_io(0x1C61, 0x1F);
 
-        bus.write(0xFF60, PSG_REG_COUNT as u8);
-        bus.write(0xFF61, 0x1F);
+        bus.write_io(0x1C60, PSG_REG_COUNT as u8);
+        bus.write_io(0x1C61, 0x1F);
 
-        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
-        bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | 0x1F);
+        bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+        bus.write_io(0x1C61, PSG_CH_CTRL_KEY_ON | 0x1F);
 
-        bus.write(0xFF60, PSG_REG_TIMER_LO as u8);
-        bus.write(0xFF61, 0x20);
-        bus.write(0xFF60, PSG_REG_TIMER_HI as u8);
-        bus.write(0xFF61, 0x00);
-        bus.write(0xFF60, PSG_REG_TIMER_CTRL as u8);
-        bus.write(0xFF61, PSG_CTRL_ENABLE);
+        bus.write_io(0x1C60, PSG_REG_TIMER_LO as u8);
+        bus.write_io(0x1C61, 0x20);
+        bus.write_io(0x1C60, PSG_REG_TIMER_HI as u8);
+        bus.write_io(0x1C61, 0x00);
+        bus.write_io(0x1C60, PSG_REG_TIMER_CTRL as u8);
+        bus.write_io(0x1C61, PSG_CTRL_ENABLE);
 
         for _ in 0..(PHI_CYCLES_PER_SAMPLE * 4) {
             bus.tick(1, true);
@@ -7427,21 +7488,21 @@ mod tests {
     fn psg_dda_mode_outputs_direct_level() {
         let mut bus = Bus::new();
 
-        bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
-        bus.write(0xFF61, 0x00);
-        bus.write(0xFF60, PSG_REG_MAIN_BALANCE as u8);
-        bus.write(0xFF61, 0xFF);
-        bus.write(0xFF60, PSG_REG_CH_BALANCE as u8);
-        bus.write(0xFF61, 0xFF);
-        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
-        bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | PSG_CH_CTRL_DDA | 0x1F);
+        bus.write_io(0x1C60, PSG_REG_CH_SELECT as u8);
+        bus.write_io(0x1C61, 0x00);
+        bus.write_io(0x1C60, PSG_REG_MAIN_BALANCE as u8);
+        bus.write_io(0x1C61, 0xFF);
+        bus.write_io(0x1C60, PSG_REG_CH_BALANCE as u8);
+        bus.write_io(0x1C61, 0xFF);
+        bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+        bus.write_io(0x1C61, PSG_CH_CTRL_KEY_ON | PSG_CH_CTRL_DDA | 0x1F);
 
-        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
-        bus.write(0xFF61, 0x1F);
+        bus.write_io(0x1C60, PSG_REG_WAVE_DATA as u8);
+        bus.write_io(0x1C61, 0x1F);
         let hi = bus.psg_sample();
 
-        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
-        bus.write(0xFF61, 0x00);
+        bus.write_io(0x1C60, PSG_REG_WAVE_DATA as u8);
+        bus.write_io(0x1C61, 0x00);
         let lo = bus.psg_sample();
 
         assert!(hi > 0, "DDA high level should produce positive sample");
@@ -7452,16 +7513,16 @@ mod tests {
     fn psg_noise_channel_changes_sample_values() {
         let mut bus = Bus::new();
 
-        bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
-        bus.write(0xFF61, 0x04); // channel 4 supports noise
-        bus.write(0xFF60, PSG_REG_MAIN_BALANCE as u8);
-        bus.write(0xFF61, 0xFF);
-        bus.write(0xFF60, PSG_REG_CH_BALANCE as u8);
-        bus.write(0xFF61, 0xFF);
-        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
-        bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | 0x1F);
-        bus.write(0xFF60, PSG_REG_NOISE_CTRL as u8);
-        bus.write(0xFF61, PSG_NOISE_ENABLE | 0x1F);
+        bus.write_io(0x1C60, PSG_REG_CH_SELECT as u8);
+        bus.write_io(0x1C61, 0x04); // channel 4 supports noise
+        bus.write_io(0x1C60, PSG_REG_MAIN_BALANCE as u8);
+        bus.write_io(0x1C61, 0xFF);
+        bus.write_io(0x1C60, PSG_REG_CH_BALANCE as u8);
+        bus.write_io(0x1C61, 0xFF);
+        bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+        bus.write_io(0x1C61, PSG_CH_CTRL_KEY_ON | 0x1F);
+        bus.write_io(0x1C60, PSG_REG_NOISE_CTRL as u8);
+        bus.write_io(0x1C61, PSG_NOISE_ENABLE | 0x1F);
 
         let mut distinct = std::collections::BTreeSet::new();
         for _ in 0..64 {
@@ -7477,21 +7538,21 @@ mod tests {
     fn psg_balance_registers_affect_output_amplitude() {
         let mut bus = Bus::new();
 
-        bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
-        bus.write(0xFF61, 0x00);
-        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
-        bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | PSG_CH_CTRL_DDA | 0x1F);
-        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
-        bus.write(0xFF61, 0x1F);
-        bus.write(0xFF60, PSG_REG_CH_BALANCE as u8);
-        bus.write(0xFF61, 0xFF);
+        bus.write_io(0x1C60, PSG_REG_CH_SELECT as u8);
+        bus.write_io(0x1C61, 0x00);
+        bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+        bus.write_io(0x1C61, PSG_CH_CTRL_KEY_ON | PSG_CH_CTRL_DDA | 0x1F);
+        bus.write_io(0x1C60, PSG_REG_WAVE_DATA as u8);
+        bus.write_io(0x1C61, 0x1F);
+        bus.write_io(0x1C60, PSG_REG_CH_BALANCE as u8);
+        bus.write_io(0x1C61, 0xFF);
 
-        bus.write(0xFF60, PSG_REG_MAIN_BALANCE as u8);
-        bus.write(0xFF61, 0xFF);
+        bus.write_io(0x1C60, PSG_REG_MAIN_BALANCE as u8);
+        bus.write_io(0x1C61, 0xFF);
         let full = bus.psg_sample().abs();
 
-        bus.write(0xFF60, PSG_REG_MAIN_BALANCE as u8);
-        bus.write(0xFF61, 0x11);
+        bus.write_io(0x1C60, PSG_REG_MAIN_BALANCE as u8);
+        bus.write_io(0x1C61, 0x11);
         let reduced = bus.psg_sample().abs();
 
         assert!(full > 0);
@@ -7502,12 +7563,12 @@ mod tests {
     fn psg_wave_writes_ignored_while_channel_enabled() {
         let mut bus = Bus::new();
 
-        bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
-        bus.write(0xFF61, 0x00);
-        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
-        bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | 0x1F);
-        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
-        bus.write(0xFF61, 0x1F);
+        bus.write_io(0x1C60, PSG_REG_CH_SELECT as u8);
+        bus.write_io(0x1C61, 0x00);
+        bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+        bus.write_io(0x1C61, PSG_CH_CTRL_KEY_ON | 0x1F);
+        bus.write_io(0x1C60, PSG_REG_WAVE_DATA as u8);
+        bus.write_io(0x1C61, 0x1F);
 
         assert_eq!(bus.psg.waveform_ram[0], 0);
         assert_eq!(bus.psg.channels[0].wave_write_pos, 0);
@@ -7517,49 +7578,67 @@ mod tests {
     fn psg_clearing_dda_resets_wave_write_index() {
         let mut bus = Bus::new();
 
-        bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
-        bus.write(0xFF61, 0x00);
-        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
-        bus.write(0xFF61, 0x00);
-        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
-        bus.write(0xFF61, 0x04);
-        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
-        bus.write(0xFF61, 0x05);
+        bus.write_io(0x1C60, PSG_REG_CH_SELECT as u8);
+        bus.write_io(0x1C61, 0x00);
+        bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+        bus.write_io(0x1C61, 0x00);
+        bus.write_io(0x1C60, PSG_REG_WAVE_DATA as u8);
+        bus.write_io(0x1C61, 0x04);
+        bus.write_io(0x1C60, PSG_REG_WAVE_DATA as u8);
+        bus.write_io(0x1C61, 0x05);
         assert_eq!(bus.psg.channels[0].wave_write_pos, 2);
 
-        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
-        bus.write(0xFF61, PSG_CH_CTRL_DDA);
-        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
-        bus.write(0xFF61, 0x00);
+        bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+        bus.write_io(0x1C61, PSG_CH_CTRL_DDA);
+        bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+        bus.write_io(0x1C61, 0x00);
         assert_eq!(bus.psg.channels[0].wave_write_pos, 0);
 
-        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
-        bus.write(0xFF61, 0x1E);
+        bus.write_io(0x1C60, PSG_REG_WAVE_DATA as u8);
+        bus.write_io(0x1C61, 0x1E);
         assert_eq!(bus.psg.waveform_ram[0], 0x1E);
+    }
+
+    #[test]
+    fn psg_wave_writes_allowed_with_dda_when_key_off() {
+        let mut bus = Bus::new();
+
+        bus.write_io(0x1C60, PSG_REG_CH_SELECT as u8);
+        bus.write_io(0x1C61, 0x00);
+        bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+        bus.write_io(0x1C61, PSG_CH_CTRL_DDA);
+        bus.write_io(0x1C60, PSG_REG_WAVE_DATA as u8);
+        bus.write_io(0x1C61, 0x1A);
+        bus.write_io(0x1C60, PSG_REG_WAVE_DATA as u8);
+        bus.write_io(0x1C61, 0x05);
+
+        assert_eq!(bus.psg.waveform_ram[0], 0x1A);
+        assert_eq!(bus.psg.waveform_ram[1], 0x05);
+        assert_eq!(bus.psg.channels[0].wave_write_pos, 2);
     }
 
     #[test]
     fn psg_frequency_divider_uses_inverse_pitch_relation() {
         fn transition_count_for_divider(divider: u16) -> usize {
             let mut bus = Bus::new();
-            bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
-            bus.write(0xFF61, 0x00);
-            bus.write(0xFF60, PSG_REG_MAIN_BALANCE as u8);
-            bus.write(0xFF61, 0xFF);
-            bus.write(0xFF60, PSG_REG_CH_BALANCE as u8);
-            bus.write(0xFF61, 0xFF);
-            bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
-            bus.write(0xFF61, 0x00);
-            bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
+            bus.write_io(0x1C60, PSG_REG_CH_SELECT as u8);
+            bus.write_io(0x1C61, 0x00);
+            bus.write_io(0x1C60, PSG_REG_MAIN_BALANCE as u8);
+            bus.write_io(0x1C61, 0xFF);
+            bus.write_io(0x1C60, PSG_REG_CH_BALANCE as u8);
+            bus.write_io(0x1C61, 0xFF);
+            bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+            bus.write_io(0x1C61, 0x00);
+            bus.write_io(0x1C60, PSG_REG_WAVE_DATA as u8);
             for i in 0..PSG_WAVE_SIZE {
-                bus.write(0xFF61, if i & 0x01 == 0 { 0x00 } else { 0x1F });
+                bus.write_io(0x1C61, if i & 0x01 == 0 { 0x00 } else { 0x1F });
             }
-            bus.write(0xFF60, PSG_REG_FREQ_LO as u8);
-            bus.write(0xFF61, divider as u8);
-            bus.write(0xFF60, PSG_REG_FREQ_HI as u8);
-            bus.write(0xFF61, ((divider >> 8) as u8) & 0x0F);
-            bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
-            bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | 0x1F);
+            bus.write_io(0x1C60, PSG_REG_FREQ_LO as u8);
+            bus.write_io(0x1C61, divider as u8);
+            bus.write_io(0x1C60, PSG_REG_FREQ_HI as u8);
+            bus.write_io(0x1C61, ((divider >> 8) as u8) & 0x0F);
+            bus.write_io(0x1C60, PSG_REG_CH_CONTROL as u8);
+            bus.write_io(0x1C61, PSG_CH_CTRL_KEY_ON | 0x1F);
 
             let mut transitions = 0usize;
             let mut prev = bus.psg_sample();
