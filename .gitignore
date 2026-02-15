@@ -1,1 +1,8 @@
 target
+.claude
+.agent
+docs/
+examples
+*.png
+*.ppm
+*.pce

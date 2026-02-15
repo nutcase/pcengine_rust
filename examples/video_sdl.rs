@@ -59,7 +59,7 @@ fn main() -> Result<(), String> {
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator
         .create_texture_streaming(
-            PixelFormatEnum::ABGR8888,
+            PixelFormatEnum::RGB24,
             FRAME_WIDTH as u32,
             FRAME_HEIGHT as u32,
         )
@@ -143,15 +143,14 @@ fn main() -> Result<(), String> {
 fn update_texture(texture: &mut sdl2::render::Texture, frame: &[u32]) -> Result<(), String> {
     texture.with_lock(None, |buffer, pitch| {
         for (y, row) in frame.chunks(FRAME_WIDTH).enumerate() {
-            let dest = &mut buffer[y * pitch..y * pitch + FRAME_WIDTH * 4];
-            for (pixel, chunk) in row.iter().zip(dest.chunks_mut(4)) {
+            let dest = &mut buffer[y * pitch..y * pitch + FRAME_WIDTH * 3];
+            for (pixel, chunk) in row.iter().zip(dest.chunks_mut(3)) {
                 let r = ((pixel >> 16) & 0xFF) as u8;
                 let g = ((pixel >> 8) & 0xFF) as u8;
                 let b = (*pixel & 0xFF) as u8;
-                chunk[0] = b;
+                chunk[0] = r;
                 chunk[1] = g;
-                chunk[2] = r;
-                chunk[3] = 0xFF;
+                chunk[2] = b;
             }
         }
     })
