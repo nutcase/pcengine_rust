@@ -1,4 +1,5 @@
 use pce::emulator::Emulator;
+use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
@@ -10,8 +11,15 @@ use std::time::{Duration, Instant};
 const FRAME_WIDTH: usize = 256;
 const FRAME_HEIGHT: usize = 240;
 const SCALE: u32 = 3;
-const DEFAULT_FRAME_LIMIT: Option<usize> = Some(120);
-const MAX_CYCLES_PER_FRAME: u64 = 5_000_000;
+const AUDIO_BATCH: usize = 1024;
+const EMU_AUDIO_BATCH: usize = 256;
+const AUDIO_QUEUE_MIN: usize = AUDIO_BATCH * 4;
+const AUDIO_QUEUE_TARGET: usize = AUDIO_BATCH * 12;
+const AUDIO_QUEUE_MAX: usize = AUDIO_BATCH * 16;
+const AUDIO_QUEUE_CRITICAL: usize = AUDIO_BATCH * 2;
+const MAX_EMU_STEPS_PER_PUMP: usize = 120_000;
+const MAX_STEPS_AFTER_FRAME: usize = 30_000;
+const MAX_PRESENT_INTERVAL: Duration = Duration::from_millis(33);
 
 fn main() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
@@ -33,9 +41,11 @@ fn main() -> Result<(), String> {
     } else {
         emulator.load_program(0xC000, &rom);
     }
+    emulator.set_audio_batch_size(EMU_AUDIO_BATCH);
     emulator.reset();
 
     let sdl = sdl2::init().map_err(|e| e.to_string())?;
+    let audio = sdl.audio().map_err(|e| e.to_string())?;
     let video = sdl.video().map_err(|e| e.to_string())?;
     let window = video
         .window(
@@ -50,7 +60,7 @@ fn main() -> Result<(), String> {
 
     let mut canvas = window
         .into_canvas()
-        .present_vsync()
+        .accelerated()
         .build()
         .map_err(|e| e.to_string())?;
     canvas
@@ -64,11 +74,21 @@ fn main() -> Result<(), String> {
             FRAME_HEIGHT as u32,
         )
         .map_err(|e| e.to_string())?;
+    let desired_audio = AudioSpecDesired {
+        freq: Some(44_100),
+        channels: Some(1),
+        samples: Some(AUDIO_BATCH as u16),
+    };
+    let audio_device = audio
+        .open_queue::<i16, _>(None, &desired_audio)
+        .map_err(|e| e.to_string())?;
+    audio_device.resume();
 
     let mut event_pump = sdl.event_pump().map_err(|e| e.to_string())?;
     let mut quit = false;
     let mut pressed: HashSet<Keycode> = HashSet::new();
-    let mut last_frame = Instant::now();
+    let mut latest_frame: Option<Vec<u32>> = None;
+    let mut last_present = Instant::now();
 
     while !quit {
         for event in event_pump.poll_iter() {
@@ -99,17 +119,29 @@ fn main() -> Result<(), String> {
         let pad_state = build_pad_state(&pressed);
         emulator.bus.set_joypad_input(pad_state);
 
-        let mut cycles_budget = MAX_CYCLES_PER_FRAME;
-        let mut frame_rendered = false;
-        let mut frames_seen = 0usize;
-        while cycles_budget > 0 && DEFAULT_FRAME_LIMIT.map_or(true, |limit| frames_seen < limit) {
-            let cycles = emulator.tick() as u64;
-            if cycles == 0 {
-                cycles_budget = cycles_budget.saturating_sub(1);
-            } else {
-                cycles_budget = cycles_budget.saturating_sub(cycles);
+        let mut steps = 0usize;
+        let mut frame_seen = false;
+        while queued_samples(&audio_device) < AUDIO_QUEUE_TARGET && steps < MAX_EMU_STEPS_PER_PUMP {
+            emulator.tick();
+            steps += 1;
+            if let Some(samples) = emulator.take_audio_samples() {
+                queue_audio_samples(&audio_device, &samples)?;
             }
             if let Some(frame) = emulator.take_frame() {
+                latest_frame = Some(frame);
+                frame_seen = true;
+            }
+            if frame_seen && steps >= MAX_STEPS_AFTER_FRAME {
+                // Keep window updates responsive even if queue size reporting is unstable.
+                break;
+            }
+        }
+
+        let queued = queued_samples(&audio_device);
+        let should_present =
+            queued >= AUDIO_QUEUE_CRITICAL || last_present.elapsed() >= MAX_PRESENT_INTERVAL;
+        if should_present {
+            if let Some(frame) = latest_frame.take() {
                 update_texture(&mut texture, &frame)?;
                 canvas.clear();
                 canvas.copy(
@@ -118,26 +150,39 @@ fn main() -> Result<(), String> {
                     Some(Rect::new(0, 0, FRAME_WIDTH as u32, FRAME_HEIGHT as u32)),
                 )?;
                 canvas.present();
-                frame_rendered = true;
-                frames_seen += 1;
-                break;
+                last_present = Instant::now();
             }
         }
-
-        if !frame_rendered {
-            // throttle a little to avoid pegging the CPU when no frame is ready
-            std::thread::sleep(Duration::from_millis(2));
+        if queued < AUDIO_QUEUE_MIN {
+            std::thread::yield_now();
+        } else if queued > AUDIO_QUEUE_TARGET {
+            // Audio is safely buffered; briefly yield CPU.
+            std::thread::sleep(Duration::from_millis(1));
         } else {
-            // crude frame pacing based on vsync timing
-            let elapsed = last_frame.elapsed();
-            last_frame = Instant::now();
-            if elapsed < Duration::from_millis(16) {
-                std::thread::sleep(Duration::from_millis(16) - elapsed);
-            }
+            std::thread::yield_now();
         }
     }
 
     Ok(())
+}
+
+fn queued_samples(device: &AudioQueue<i16>) -> usize {
+    device.size() as usize / std::mem::size_of::<i16>()
+}
+
+fn queue_audio_samples(device: &AudioQueue<i16>, samples: &[i16]) -> Result<(), String> {
+    let available = AUDIO_QUEUE_MAX.saturating_sub(queued_samples(device));
+    if available == 0 {
+        return Ok(());
+    }
+    if samples.len() > available {
+        // Keep stream continuity: enqueue the earliest portion, drop the newest tail.
+        device
+            .queue_audio(&samples[..available])
+            .map_err(|e| e.to_string())
+    } else {
+        device.queue_audio(samples).map_err(|e| e.to_string())
+    }
 }
 
 fn update_texture(texture: &mut sdl2::render::Texture, frame: &[u32]) -> Result<(), String> {

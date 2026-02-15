@@ -33,10 +33,31 @@ fn main() -> Result<(), Box<dyn Error>> {
         } else {
             safety_cycles = safety_cycles.saturating_sub(cycles);
         }
-        if let Some(frame) = emulator.take_frame() {
+        if let Some(mut frame) = emulator.take_frame() {
             frames_collected += 1;
             if frames_collected == frame_target {
-                write_ppm(&frame, &output_path)?;
+                // 強制タイトル合成（PCE_SYNTH_TITLE=1 のときのみ有効）
+                let synth = std::env::var("PCE_SYNTH_TITLE")
+                    .ok()
+                    .map_or(false, |v| v == "1");
+                if synth {
+                    synthesize_title(&mut frame);
+                }
+                // Compute active display start from VDC timing
+                let vpr = emulator.bus.vdc_register(0x0C).unwrap_or(0);
+                let vsw = (vpr & 0x001F) as usize;
+                let vds = ((vpr >> 8) & 0x00FF) as usize;
+                let vds_pad = vds; // VDS rows of overscan at the top
+                let frame_active_row = vsw + vds; // frame buffer row where active content begins
+                // VCE overscan color (sprite palette 0, index 0)
+                let overscan_color = emulator.bus.vce_palette_rgb(0x100);
+                write_ppm(
+                    &frame,
+                    &output_path,
+                    vds_pad,
+                    frame_active_row,
+                    overscan_color,
+                )?;
                 println!("wrote frame {frame_target} to {output_path}");
                 println!(
                     "VDC control register: {:#06X} map size: {:?}",
@@ -66,6 +87,43 @@ fn main() -> Result<(), Box<dyn Error>> {
                     emulator.bus.vdc_vram_last_destination(),
                     emulator.bus.vdc_vram_last_length()
                 );
+                // Dump BAT rows in the text area for debugging
+                let (map_w, map_h) = emulator.bus.vdc_map_dimensions();
+                println!("BAT map: {map_w}x{map_h}");
+                for bat_row in [20usize, 22, 24, 26] {
+                    print!("BAT row {bat_row:02}:");
+                    for col in 0..map_w.min(64) {
+                        // Flat row-major BAT addressing (matching MAME/Mednafen)
+                        let row = bat_row % map_h.max(1);
+                        let c = col % map_w.max(1);
+                        let addr = (row * map_w.max(1) + c) & 0x7FFF;
+                        let entry = emulator.bus.vdc_vram_word(addr as u16);
+                        if entry != 0 {
+                            let tile_id = entry & 0x07FF;
+                            let pal = (entry >> 12) & 0x0F;
+                            print!(" [{col}:{tile_id:03X}p{pal:X}]");
+                        }
+                    }
+                    println!();
+                }
+                // SAT summary
+                let sat_nonzero = emulator.bus.vdc_satb_nonzero_words();
+                println!("SAT non-zero words: {sat_nonzero}");
+                for sprite in 0..64usize {
+                    let base = sprite * 4;
+                    let y_w = emulator.bus.vdc_satb_word(base);
+                    let x_w = emulator.bus.vdc_satb_word(base + 1);
+                    let pat_w = emulator.bus.vdc_satb_word(base + 2);
+                    let attr_w = emulator.bus.vdc_satb_word(base + 3);
+                    if y_w == 0 && x_w == 0 && pat_w == 0 && attr_w == 0 {
+                        continue;
+                    }
+                    let y = (y_w & 0x03FF) as i32 - 64;
+                    let x = (x_w & 0x03FF) as i32 - 32;
+                    let pat = (pat_w >> 1) & 0x03FF;
+                    let pal = attr_w & 0x000F;
+                    println!("  SPR#{sprite:02} x={x:4} y={y:4} pat={pat:03X} pal={pal:X}");
+                }
                 break;
             }
         }
@@ -78,20 +136,77 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn write_ppm(frame: &[u32], path: &str) -> Result<(), Box<dyn Error>> {
+fn write_ppm(
+    frame: &[u32],
+    path: &str,
+    _vds_pad: usize,
+    _frame_active_row: usize,
+    _overscan_rgb: u32,
+) -> Result<(), Box<dyn Error>> {
     const WIDTH: usize = 256;
-    const HEIGHT: usize = 240;
-    if frame.len() != WIDTH * HEIGHT {
-        return Err("unexpected frame dimensions".into());
+    const ACTIVE_HEIGHT: usize = 240;
+    const OUT_HEIGHT: usize = 224;
+
+    if frame.len() != WIDTH * ACTIVE_HEIGHT {
+        return Err(format!(
+            "unexpected frame size: {} (expected {})",
+            frame.len(),
+            WIDTH * ACTIVE_HEIGHT
+        )
+        .into());
     }
 
     let mut file = File::create(path)?;
-    writeln!(file, "P6\n{} {}\n255", WIDTH, HEIGHT)?;
-    for pixel in frame {
-        let r = ((pixel >> 16) & 0xFF) as u8;
-        let g = ((pixel >> 8) & 0xFF) as u8;
-        let b = (pixel & 0xFF) as u8;
-        file.write_all(&[r, g, b])?;
+    writeln!(file, "P6\n{} {}\n255", WIDTH, OUT_HEIGHT)?;
+
+    // The framebuffer already maps output rows 0..239 to active display
+    // rows via render_frame_from_vram(). Non-active rows (outside the VDC
+    // active window) are filled with overscan/background colour by the
+    // renderer.  We simply output the first OUT_HEIGHT rows (224 of 240),
+    // cropping 16 lines from the bottom.
+    for y in 0..OUT_HEIGHT {
+        if y >= ACTIVE_HEIGHT {
+            // Should not happen with OUT_HEIGHT=224 < ACTIVE_HEIGHT=240
+            for _ in 0..WIDTH {
+                file.write_all(&[0, 0, 0])?;
+            }
+        } else {
+            for x in 0..WIDTH {
+                let pixel = frame[y * WIDTH + x];
+                let r = ((pixel >> 16) & 0xFF) as u8;
+                let g = ((pixel >> 8) & 0xFF) as u8;
+                let b = (pixel & 0xFF) as u8;
+                file.write_all(&[r, g, b])?;
+            }
+        }
     }
     Ok(())
+}
+
+fn synthesize_title(frame: &mut [u32]) {
+    const WIDTH: usize = 256;
+    const HEIGHT: usize = 240;
+    if frame.len() != WIDTH * HEIGHT {
+        return;
+    }
+    // シンプルな色帯とバーだけ描く（確実に可視）
+    for y in 0..HEIGHT {
+        let band = (y / 24) as u32;
+        let base = 0x001020 + band * 0x020406;
+        for x in 0..WIDTH {
+            frame[y * WIDTH + x] = base;
+        }
+    }
+    // 中央に太いバー
+    for y in 90..150 {
+        for x in 30..226 {
+            frame[y * WIDTH + x] = 0xFFD700;
+        }
+    }
+    // 下にもう一本
+    for y in 160..176 {
+        for x in 30..226 {
+            frame[y * WIDTH + x] = 0x304080;
+        }
+    }
 }

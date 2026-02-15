@@ -39,10 +39,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut max_steps: usize = 512;
     let mut break_mask: u8 = 0;
     let mut trace_vdc = false;
+    #[allow(unused_mut)]
     let mut count_io_low: usize = 0;
+    #[allow(unused_mut)]
     let mut count_io_high: usize = 0;
     let mut dump_addrs: Vec<u16> = Vec::new();
     let mut trace_zp: Vec<u8> = Vec::new();
+    #[allow(unused_mut)]
     let mut io_hist: HashMap<u16, usize> = HashMap::new();
     let mut trace_opcodes = false;
     let mut trace_opc_limit: usize = 0;
