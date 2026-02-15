@@ -6,7 +6,7 @@ This project implements the core scaffolding for a PC Engine (HuC6280) emulator 
 - Bank-aware 64 KiB memory window with configurable 8 KiB pages backing RAM or ROM data.
 - HuC6280 CPU core covering loads/stores, arithmetic/logic, branches, block transfers (`TII/TIN/TDD/TIA/TAI`), memory page register moves (`TMA/TAM`), register swaps (`SAX/SAY/SXY`), stack/flag control (`CLA/CLX/CLY`, `SET`, `CSH/CSL`, `BSR`), and the ST0/1/2 VDC immediates.
 - MPR bank switching implemented at `$FF80`-`$FF87`, with a simple I/O page backing for `$FF`-mapped segments (sufficient for early device stubbing).
-- Interrupt scaffold including `WAI`/`RTI`, IRQ/NMI request handling, and stack push/pull semantics.
+- Interrupt handling with `WAI`/`RTI`, per-source vector selection (IRQ2/IRQ1/TIMER/NMI), and stack push/pull semantics.
 - Early VDC renderer that draws background tile maps and SATB-driven sprites (with basic priority handling) into a software framebuffer.
 - HuC6270 DMA paths (VRAM↔VRAM, SATB auto-transfer, CRAM palette DMA) with busy/status flag updates that match the DS/DV handshake BIOS routines expect.
 - Execution loop that runs until a `BRK` instruction or a cycle budget is hit.
@@ -37,12 +37,13 @@ To experiment with ROM banking in code, call `Bus::load_rom_image` followed by `
 
 - `cargo run --example trace_boot roms/sample_game.pce` — trace CPU execution and print bus state.
 - `cargo run --example dump_frame roms/sample_game.pce` — dump the next rendered frame into `frame.ppm` for quick inspection.
+- `cargo run --example audio_sdl --features audio-sdl -- roms/sample_game.pce` — play PSG audio output in real time.
 - `cargo run --example video_sdl --features video-sdl roms/sample_game.pce` — open an SDL window and stream frames in real time.
   Controls: arrows move the D-pad, `Z`/`X` map to buttons I/II, `Enter` is Select, and `Space` is Run.
   Sprite priority handling and DMA-driven palette uploads mirror the HuC6270 behaviour so BIOS startup code can rely on SATB/CRAM transfers completing automatically.
 
 ## Next Steps
-- Fill out the remaining HuC6280 instructions (block moves, bit manipulation, interrupts) and timing nuances.
+- Validate HuC6280 cycle timing against diagnostic ROMs.
 - Model the VDC, PSG, timers, and I/O registers via pluggable bus devices.
 - Add ROM loaders for `.pce` images with header parsing and automatic bank setup.
 - Integrate rendering and audio back-ends for a complete user-facing emulator.

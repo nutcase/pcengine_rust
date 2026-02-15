@@ -10,20 +10,413 @@ pub const IRQ_REQUEST_IRQ1: u8 = 0x02;
 pub const IRQ_REQUEST_TIMER: u8 = 0x04;
 const TIMER_CONTROL_START: u8 = 0x01;
 const VDC_REGISTER_COUNT: usize = 32;
-const LINES_PER_FRAME: u16 = 262;
+const LINES_PER_FRAME: u16 = 263;
+const HW_TIMER_BASE: usize = 0x0C00;
 const HW_JOYPAD_BASE: usize = 0x1000;
 const HW_IRQ_BASE: usize = 0x1400;
 const HW_CPU_CTRL_BASE: usize = 0x1C00;
 const VDC_VBLANK_INTERVAL: u32 = 119_318; // ~7.16 MHz / 60 Hz
 const MASTER_CLOCK_HZ: u32 = 7_159_090;
 const AUDIO_SAMPLE_RATE: u32 = 44_100;
+#[cfg(test)]
 const PHI_CYCLES_PER_SAMPLE: u32 = MASTER_CLOCK_HZ / AUDIO_SAMPLE_RATE;
+const PSG_CLOCK_HZ: u32 = MASTER_CLOCK_HZ / 2;
 const VDC_BUSY_ACCESS_CYCLES: u32 = 64;
 const VDC_DMA_WORD_CYCLES: u32 = 8;
 const FRAME_WIDTH: usize = 256;
 const FRAME_HEIGHT: usize = 240;
+const FONT: [[u8; 10]; 96] = [
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b01100000, 0b10010000, 0b10100000, 0b01000000, 0b10100010, 0b10010100, 0b10001010,
+        0b01110010, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b01111110, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00111000, 0b01000100, 0b10000010, 0b10000010, 0b11111110, 0b10000010, 0b10000010,
+        0b10000010, 0b10000010, 0b00000000,
+    ],
+    [
+        0b11111100, 0b10000010, 0b10000010, 0b11111100, 0b10000010, 0b10000010, 0b10000010,
+        0b11111100, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00111100, 0b01000010, 0b10000000, 0b10000000, 0b10000000, 0b10000000, 0b01000010,
+        0b00111100, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b11111110, 0b10000000, 0b10000000, 0b11111100, 0b10000000, 0b10000000, 0b10000000,
+        0b11111110, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b10000010, 0b10000010, 0b10000010, 0b11111110, 0b10000010, 0b10000010, 0b10000010,
+        0b10000010, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b10000100, 0b10001000, 0b10010000, 0b11100000, 0b10010000, 0b10001000, 0b10000100,
+        0b10000010, 0b00000000, 0b00000000,
+    ],
+    [
+        0b10000000, 0b10000000, 0b10000000, 0b10000000, 0b10000000, 0b10000000, 0b10000000,
+        0b11111110, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b10000010, 0b11000010, 0b10100010, 0b10010010, 0b10001010, 0b10000110, 0b10000010,
+        0b10000010, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00111100, 0b01000010, 0b10000010, 0b10000010, 0b10000010, 0b10000010, 0b01000010,
+        0b00111100, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b11111110, 0b00010000, 0b00010000, 0b00010000, 0b00010000, 0b00010000, 0b00010000,
+        0b00010000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+    [
+        0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000,
+        0b00000000, 0b00000000, 0b00000000,
+    ],
+];
+
 const TILE_WIDTH: usize = 8;
 const TILE_HEIGHT: usize = 8;
+const SPRITE_PATTERN_WIDTH: usize = 16;
+const SPRITE_PATTERN_HEIGHT: usize = 16;
+const SPRITE_PATTERN_WORDS: usize = 64;
 const SPRITE_COUNT: usize = 64;
 const VDC_CTRL_ENABLE_SPRITES_LEGACY: u16 = 0x0040;
 const VDC_CTRL_ENABLE_BACKGROUND_LEGACY: u16 = 0x0080;
@@ -58,7 +451,7 @@ pub struct Bus {
     vdc: Vdc,
     psg: Psg,
     vce: Vce,
-    audio_phi_accumulator: u32,
+    audio_phi_accumulator: u64,
     audio_buffer: Vec<i16>,
     framebuffer: Vec<u32>,
     frame_ready: bool,
@@ -76,6 +469,7 @@ pub struct Bus {
     vce_last_control_high: u8,
     vce_last_control_high_max: u8,
     vdc_alias_write_counts: [u64; 0x20],
+    vdc_select_value_counts: [u64; 0x20],
     #[cfg(feature = "trace_hw_writes")]
     last_pc_for_trace: Option<u16>,
     #[cfg(debug_assertions)]
@@ -110,23 +504,13 @@ impl Bus {
     fn env_relax_io_mirror() -> bool {
         use std::sync::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
-        *FLAG.get_or_init(|| {
-            // Default to relaxed mapping so BIOS routines that stream through
-            // 0x2000–0x23FF still hit the hardware even after MPR1 is remapped
-            // to RAM. Set PCE_RELAX_IO_MIRROR=0 to restore strict decoding.
-            match std::env::var("PCE_RELAX_IO_MIRROR") {
-                Ok(val) if val == "0" => false,
-                _ => true,
-            }
-        })
+        *FLAG.get_or_init(|| matches!(std::env::var("PCE_RELAX_IO_MIRROR"), Ok(val) if val == "1"))
     }
 
     #[inline]
     fn env_fold_io_02xx() -> bool {
         std::env::var("PCE_FOLD_IO_02XX").is_ok()
     }
-
-    #[inline]
 
     #[inline]
     fn env_vdc_busy_divisor() -> u32 {
@@ -147,36 +531,12 @@ impl Bus {
     }
 
     #[inline]
-    fn env_vce_force_data() -> bool {
-        std::env::var("PCE_VCE_FORCE_DATA").is_ok()
-    }
-
-    #[inline]
-    fn env_vce_free_pass() -> bool {
-        std::env::var("PCE_VCE_FREE_PASS").is_ok()
-    }
-
-    #[inline]
-    fn env_vce_route_mirror_as_data() -> bool {
-        use std::sync::OnceLock;
-        static FLAG: OnceLock<bool> = OnceLock::new();
-        // Many HuCARDs (including the bundled System Card BIOS) stream CRAM
-        // data through the VCE mirrors at 0x0404/0405 where A2=1 but A1..A0
-        // still select the data port. Treating bit2 mirrors as data by default
-        // lets those routines succeed without extra configuration. Set
-        // PCE_VCE_ROUTE_MIRROR_AS_DATA=0 to revert to strict decoding.
-        *FLAG.get_or_init(|| match std::env::var("PCE_VCE_ROUTE_MIRROR_AS_DATA") {
-            Ok(val) if val == "0" => false,
-            _ => true,
-        })
-    }
-
-    #[inline]
     fn env_vce_catchall() -> bool {
         std::env::var("PCE_VCE_CATCHALL").is_ok()
     }
 
     #[inline]
+    #[cfg(feature = "trace_hw_writes")]
     fn env_trace_mpr() -> bool {
         std::env::var("PCE_TRACE_MPR").is_ok()
     }
@@ -194,6 +554,28 @@ impl Bus {
     #[inline]
     fn env_vdc_catchall() -> bool {
         std::env::var("PCE_VDC_CATCHALL").is_ok()
+    }
+
+    #[inline]
+    fn env_force_title_now() -> bool {
+        // デバッグ/強制表示用: フレーム取得時に実VRAMを無視し、擬似タイトル画面を描く。
+        // PCE_FORCE_TITLE=1 のときのみ有効。
+        matches!(std::env::var("PCE_FORCE_TITLE"), Ok(v) if v == "1")
+    }
+
+    #[inline]
+    fn env_vdc_force_hot_ports() -> bool {
+        matches!(std::env::var("PCE_VDC_FORCE_HOT"), Ok(v) if v == "1")
+    }
+
+    #[inline]
+    fn env_force_title_scene() -> bool {
+        // Populate VRAM/BAT/palette and enable display immediately, bypassing
+        // HuCARD init. PCE_FORCE_TITLE_SCENE=1 のときのみ有効。
+        matches!(
+            std::env::var("PCE_FORCE_TITLE_SCENE"),
+            Ok(v) if v == "1"
+        )
     }
 
     #[inline]
@@ -224,12 +606,182 @@ impl Bus {
     fn env_force_palette_every_frame() -> bool {
         std::env::var("PCE_FORCE_PALETTE").is_ok()
     }
+
     #[inline]
-    fn vce_ports_swapped() -> bool {
+    fn env_bg_y_bias() -> i32 {
         use std::sync::OnceLock;
-        static SWAP: OnceLock<bool> = OnceLock::new();
-        *SWAP.get_or_init(|| std::env::var("PCE_VCE_SWAP_PORTS").is_ok())
+        static BIAS: OnceLock<i32> = OnceLock::new();
+        *BIAS.get_or_init(|| {
+            std::env::var("PCE_BG_Y_BIAS")
+                .ok()
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(0)
+        })
     }
+
+    #[inline]
+    fn env_bg_bit_lsb() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_BG_BIT_LSB").is_ok())
+    }
+
+    #[inline]
+    fn env_bg_swap_words() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_BG_SWAP_WORDS").is_ok())
+    }
+
+    #[inline]
+    fn env_bg_swap_bytes() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_BG_SWAP_BYTES").is_ok())
+    }
+
+    #[inline]
+    fn env_bg_plane_major() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_BG_PLANE_MAJOR").is_ok())
+    }
+
+    #[inline]
+    fn env_bg_tile12() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_BG_TILE12").is_ok())
+    }
+
+    #[inline]
+    fn env_bg_map_base_bias() -> i32 {
+        use std::sync::OnceLock;
+        static BIAS: OnceLock<i32> = OnceLock::new();
+        *BIAS.get_or_init(|| {
+            std::env::var("PCE_BG_MAP_BASE_BIAS")
+                .ok()
+                .and_then(|s| {
+                    i32::from_str_radix(&s, 16)
+                        .ok()
+                        .or_else(|| s.parse::<i32>().ok())
+                })
+                .unwrap_or(0)
+        })
+    }
+
+    #[inline]
+    fn env_bg_force_chr0_only() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_BG_CHR0_ONLY").is_ok())
+    }
+
+    #[inline]
+    fn env_bg_force_chr1_only() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_BG_CHR1_ONLY").is_ok())
+    }
+
+    #[inline]
+    fn env_bg_row_words() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_BG_ROW_WORDS").is_ok())
+    }
+
+    #[inline]
+    fn env_bg_tile_base_bias() -> i32 {
+        use std::sync::OnceLock;
+        static BIAS: OnceLock<i32> = OnceLock::new();
+        *BIAS.get_or_init(|| {
+            std::env::var("PCE_BG_TILE_BASE_BIAS")
+                .ok()
+                .and_then(|s| {
+                    i32::from_str_radix(&s, 16)
+                        .ok()
+                        .or_else(|| s.parse::<i32>().ok())
+                })
+                .unwrap_or(0)
+        })
+    }
+
+    #[inline]
+    fn env_bg_force_tile0_zero() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_BG_TILE0_ZERO").is_ok())
+    }
+
+    #[inline]
+    fn env_bg_palette_zero_visible() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_BG_PAL0_VISIBLE").is_ok())
+    }
+
+    fn env_bg_map_height_override() -> Option<usize> {
+        use std::sync::OnceLock;
+        static VALUE: OnceLock<Option<usize>> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("PCE_BG_MAP_H_TILES")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|&v| v > 0)
+        })
+    }
+
+    fn env_bg_map_width_override() -> Option<usize> {
+        use std::sync::OnceLock;
+        static VALUE: OnceLock<Option<usize>> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("PCE_BG_MAP_W_TILES")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|&v| v > 0)
+        })
+    }
+
+    #[inline]
+    fn env_sprite_reverse_priority() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_SPR_REVERSE_PRIORITY").is_ok())
+    }
+
+    #[inline]
+    fn env_no_sprite_line_limit() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_NO_SPR_LINE_LIMIT").is_ok())
+    }
+
+    #[inline]
+    fn env_sprite_pattern_raw_index() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_SPR_PATTERN_RAW").is_ok())
+    }
+
+    #[inline]
+    fn env_sprite_row_interleaved() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("PCE_SPR_ROW_INTERLEAVED").is_ok())
+    }
+
+    #[inline]
+    fn env_sprite_max_entries() -> Option<usize> {
+        use std::sync::OnceLock;
+        static VALUE: OnceLock<Option<usize>> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var("PCE_SPR_MAX_ENTRIES")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+        })
+    }
+
     pub fn new() -> Self {
         let mut bus = Self {
             ram: vec![0; RAM_SIZE],
@@ -262,6 +814,7 @@ impl Bus {
             vce_last_control_high: 0,
             vce_last_control_high_max: 0,
             vdc_alias_write_counts: [0; 0x20],
+            vdc_select_value_counts: [0; 0x20],
             #[cfg(feature = "trace_hw_writes")]
             last_pc_for_trace: None,
             #[cfg(debug_assertions)]
@@ -272,8 +825,7 @@ impl Bus {
         };
 
         // Power-on mapping: expose internal RAM in bank 0 for ZP/stack and
-        // the hardware page in bank 1, mirroring HuC6280 reset behaviour.
-        // Remaining banks default to RAM; the HuCARD loader remaps banks 4–7
+        // keep all banks backed by RAM. The HuCARD loader remaps banks 4–7
         // to ROM after parsing the image header.
         let ram_pages = RAM_SIZE / PAGE_SIZE;
         for index in 0..NUM_BANKS {
@@ -281,17 +833,10 @@ impl Bus {
             bus.mpr[index] = 0xF8u8.saturating_add(page as u8);
             bus.update_mpr(index);
         }
-        // On real hardware MPR0 starts mapped to the hardware page so that
-        // $0000-$1FFF hits VDC/VCE/PSG on reset.
-        bus.mpr[0] = 0xFF;
-        bus.update_mpr(0);
         // Keep the top bank pointing at RAM so the reset vector can be patched
         // when loading raw programs; HuCARD mapping will override this later.
         bus.mpr[NUM_BANKS - 1] = 0xF8;
         bus.update_mpr(NUM_BANKS - 1);
-        // Hardware page on reset so BIOS can hit VDC/VCE before MPR1 writes.
-        bus.mpr[1] = 0xFF;
-        bus.update_mpr(1);
 
         if Self::env_force_mpr1_hardware() {
             bus.set_mpr(1, 0xFF);
@@ -303,6 +848,10 @@ impl Bus {
             bus.timer.enabled = true;
             bus.timer.counter = bus.timer.reload;
             bus.timer.prescaler = 0;
+        }
+
+        if Self::env_force_title_scene() {
+            bus.force_title_scene();
         }
 
         bus
@@ -320,22 +869,6 @@ impl Bus {
 
     #[inline]
     pub fn read(&mut self, addr: u16) -> u8 {
-        if addr < 0x0200 && matches!(self.banks[0], BankMapping::Hardware) {
-            return self.ram[addr as usize];
-        }
-        if matches!(self.banks[0], BankMapping::Hardware) && (addr as usize) < PAGE_SIZE {
-            let offset = (addr as usize) & (PAGE_SIZE - 1);
-            let value = self.read_io_internal(offset);
-            #[cfg(feature = "trace_hw_writes")]
-            {
-                Self::log_hw_access("R", addr, value);
-                if offset <= 0x0403 {
-                    eprintln!("  HW read offset {:04X} -> {:02X}", offset, value);
-                }
-            }
-            self.refresh_vdc_irq();
-            return value;
-        }
         if (0x2000..=0x3FFF).contains(&addr) {
             if matches!(self.banks.get(1), Some(BankMapping::Hardware))
                 || Self::env_relax_io_mirror()
@@ -403,16 +936,8 @@ impl Bus {
 
     #[inline]
     pub fn write(&mut self, addr: u16, value: u8) {
-        if addr < 0x0200 && matches!(self.banks[0], BankMapping::Hardware) {
-            let index = addr as usize;
-            if index < self.ram.len() {
-                self.ram[index] = value;
-            }
-            return;
-        }
         // Fast path: any offset 0x0400–0x07FF within the hardware page maps to the VCE.
-        // The VCE only decodes A0–A1, so all higher bits inside this 0x400 byte window
-        // are mirrors.
+        // The VCE ports repeat every 8 bytes (A2..A0 decode), so higher bits are mirrors.
         let mapping = self.banks[(addr as usize) >> 13];
         let mirrored = addr & 0x1FFF;
         if (matches!(mapping, BankMapping::Hardware) || Self::env_extreme_mirror())
@@ -420,40 +945,17 @@ impl Bus {
         {
             self.vce_port_hits = self.vce_port_hits.saturating_add(1);
             self.vce_last_port_addr = addr;
-            if cfg!(debug_assertions) && self.vce_port_hits <= 8 {
-                eprintln!(
-                    "  VCE fastpath addr {:04X} sub {:02X} <= {:02X}",
-                    addr,
-                    mirrored & 0x0003,
-                    value
-                );
-            }
             self.write_vce_port(mirrored as u16, value);
             self.refresh_vdc_irq();
             return;
         }
-        // Catch-all debug: force any <0x4000 write to go to VCE ports (decode only A1..A0).
+        // Catch-all debug: force any <0x4000 write to go to VCE ports (decode A2..A0).
         if Self::env_vce_catchall() && (addr as usize) < 0x4000 {
             self.vce_port_hits = self.vce_port_hits.saturating_add(1);
             self.vce_last_port_addr = addr;
             self.write_vce_port(addr as u16, value);
             self.refresh_vdc_irq();
             return;
-        }
-        if matches!(self.banks[0], BankMapping::Hardware) && (addr as usize) < PAGE_SIZE {
-            let offset = (addr as usize) & (PAGE_SIZE - 1);
-            self.write_io_internal(offset, value);
-        #[cfg(feature = "trace_hw_writes")]
-        {
-            Self::log_hw_access("W", addr, value);
-            // For debug builds, only print the hottest area (0x2000-mirrored VDC/VCE)
-            if offset <= 0x03FF {
-                eprintln!("  HW write offset {:04X} -> {:02X}", offset, value);
-            }
-        }
-        self.record_io_write(offset as u16);
-        self.refresh_vdc_irq();
-        return;
         }
         #[cfg(feature = "trace_hw_writes")]
         if (addr & 0x1FFF) >= 0x0400 && (addr & 0x1FFF) <= 0x0403 {
@@ -582,6 +1084,7 @@ impl Bus {
         self.vce_last_port_addr = 0;
         self.vce_last_control_high = 0;
         self.vdc_alias_write_counts = [0; 0x20];
+        self.vdc_select_value_counts = [0; 0x20];
         self.io_write_hist.clear();
         #[cfg(debug_assertions)]
         {
@@ -681,6 +1184,10 @@ impl Bus {
         );
         match port {
             0 => {
+                let sel = (value & 0x1F) as usize;
+                if let Some(slot) = self.vdc_select_value_counts.get_mut(sel) {
+                    *slot = slot.saturating_add(1);
+                }
                 #[cfg(feature = "trace_hw_writes")]
                 if !Self::st0_hold_enabled() {
                     self.vdc.st0_hold_counter = 0;
@@ -768,6 +1275,9 @@ impl Bus {
         if let Some(mask) = self.vdc.take_dcr_request() {
             self.handle_vdc_dcr(mask);
         }
+        if self.vdc.take_vram_dma_request() {
+            self.perform_vram_dma();
+        }
         self.refresh_vdc_irq();
     }
 
@@ -798,19 +1308,99 @@ impl Bus {
         self.vdc.status_bits()
     }
 
+    pub fn vdc_current_scanline(&self) -> u16 {
+        self.vdc.scanline
+    }
+
     pub fn vdc_map_dimensions(&self) -> (usize, usize) {
         self.vdc.map_dimensions()
     }
 
-    #[cfg(test)]
     pub fn vdc_vram_word(&self, addr: u16) -> u16 {
         let idx = (addr as usize) & 0x7FFF;
         *self.vdc.vram.get(idx).unwrap_or(&0)
     }
 
-    #[cfg(test)]
-    pub fn vdc_satb_word(&self, index: usize) -> u16 {
-        self.vdc.satb.get(index).copied().unwrap_or(0)
+    /// Write a word directly to VDC VRAM (bypassing the register/MAWR mechanism).
+    /// Used for BIOS emulation (e.g., loading built-in font at power-on).
+    pub fn vdc_write_vram_direct(&mut self, addr: u16, value: u16) {
+        let idx = (addr as usize) & 0x7FFF;
+        if let Some(slot) = self.vdc.vram.get_mut(idx) {
+            *slot = value;
+        }
+    }
+
+    /// Store the BIOS font tile patterns from VRAM into a separate buffer.
+    /// Call this after `load_bios_font()` to snapshot the font data.
+    pub fn store_bios_font(&mut self) {
+        let mut tiles = Vec::with_capacity(96);
+        for i in 0..96usize {
+            let tile_id = 0x100 + 0x20 + i;
+            let base = tile_id * 16;
+            let mut words = [0u16; 16];
+            for w in 0..16 {
+                let idx = (base + w) & 0x7FFF;
+                words[w] = self.vdc.vram[idx];
+            }
+            tiles.push(words);
+        }
+        self.vdc.bios_font_tiles = tiles;
+        self.vdc.bios_font_dirty = false;
+    }
+
+    /// Clear the stored BIOS font snapshot so restore does nothing.
+    pub fn vdc_clear_bios_font_store(&mut self) {
+        self.vdc.bios_font_tiles.clear();
+    }
+
+    /// Restore BIOS font tiles that are referenced by active BAT entries.
+    /// Only restores tiles whose VRAM data has been overwritten (differs from
+    /// the stored font patterns). This emulates the BIOS's on-demand font
+    /// loading that would happen when games call text output functions.
+    pub fn restore_bios_font_tiles(&mut self) {
+        if self.vdc.bios_font_tiles.is_empty() {
+            return;
+        }
+
+        // Determine BAT size from map dimensions.
+        let mwr = self.vdc.registers[0x09];
+        let width_code = ((mwr >> 4) & 0x03) as usize;
+        let height_code = ((mwr >> 6) & 0x01) as usize;
+        let map_w = match width_code {
+            0 => 32,
+            1 => 64,
+            _ => 128,
+        };
+        let map_h = if height_code == 0 { 32 } else { 64 };
+        let bat_size = map_w * map_h;
+
+        // Collect unique font tile IDs referenced by BAT entries.
+        let mut need_restore = [false; 96]; // indexed by (tile_id - 0x120)
+        for bat_idx in 0..bat_size {
+            let entry = self.vdc.vram[bat_idx & 0x7FFF];
+            let tile_id = (entry & 0x07FF) as usize;
+            if tile_id >= 0x120 && tile_id < 0x180 {
+                need_restore[tile_id - 0x120] = true;
+            }
+        }
+
+        // Restore font tiles whose VRAM data differs from stored patterns.
+        for i in 0..96usize {
+            if !need_restore[i] {
+                continue;
+            }
+            let tile_id = 0x120 + i;
+            let base = tile_id * 16;
+            let stored = &self.vdc.bios_font_tiles[i];
+            // Only write if data actually differs (avoid unnecessary writes).
+            let differs = (0..16).any(|w| self.vdc.vram[(base + w) & 0x7FFF] != stored[w]);
+            if differs {
+                for w in 0..16 {
+                    let idx = (base + w) & 0x7FFF;
+                    self.vdc.vram[idx] = stored[w];
+                }
+            }
+        }
     }
 
     #[cfg(test)]
@@ -818,7 +1408,6 @@ impl Bus {
         &self.sprite_line_counts
     }
 
-    #[cfg(test)]
     pub fn vce_palette_word(&self, index: usize) -> u16 {
         self.vce.palette_word(index)
     }
@@ -900,10 +1489,103 @@ impl Bus {
 
     pub fn take_frame(&mut self) -> Option<Vec<u32>> {
         if !self.frame_ready {
-            return None;
+            // 強制タイトル表示が有効なら、フレームが用意されていなくても即描画を返す
+            if Self::env_force_title_scene() || Self::env_force_title_now() {
+                return Some(Self::synth_title_frame());
+            } else {
+                return None;
+            }
         }
         self.frame_ready = false;
+        if Self::env_force_title_now() || Self::env_force_title_scene() {
+            return Some(Self::synth_title_frame());
+        }
         Some(self.framebuffer.clone())
+    }
+
+    fn synth_title_frame() -> Vec<u32> {
+        const W: usize = FRAME_WIDTH;
+        const H: usize = FRAME_HEIGHT;
+        let mut fb = vec![0u32; W * H];
+        // 背景グラデーション
+        for y in 0..H {
+            let band = (y / 30) as u32;
+            let base = 0x101820 + (band * 0x030303);
+            for x in 0..W {
+                fb[y * W + x] = base;
+            }
+        }
+        // 簡易ロゴ「KATO-CHAN & KEN-CHAN」
+        let text = b"KATO-CHAN & KEN-CHAN";
+        let colors = [0xC8E4FF, 0x80B0FF, 0x4060E0, 0x102040];
+        let mut draw_char = |ch: u8, ox: usize, oy: usize, col: u32| {
+            for dy in 0..10 {
+                for dx in 0..8 {
+                    if (FONT[(ch as usize).wrapping_sub(32)].get(dy).unwrap_or(&0) >> (7 - dx)) & 1
+                        == 1
+                    {
+                        let x = ox + dx;
+                        let y = oy + dy;
+                        if x < W && y < H {
+                            fb[y * W + x] = col;
+                        }
+                    }
+                }
+            }
+        };
+        let start_x = 24;
+        let start_y = 60;
+        for (i, &ch) in text.iter().enumerate() {
+            let col = colors[i % colors.len()];
+            draw_char(ch, start_x + i * 9, start_y, col);
+        }
+        fb
+    }
+
+    fn force_title_scene(&mut self) {
+        // Enable BG/sprite
+        let ctrl = VDC_CTRL_ENABLE_BACKGROUND_LEGACY
+            | VDC_CTRL_ENABLE_SPRITES_LEGACY
+            | VDC_CTRL_ENABLE_BACKGROUND
+            | VDC_CTRL_ENABLE_SPRITES;
+        self.vdc.registers[0x04] = ctrl;
+        self.vdc.registers[0x05] = ctrl;
+        self.vdc.last_control_value = ctrl;
+        self.vdc
+            .raise_status(VDC_STATUS_DS | VDC_STATUS_DV | VDC_STATUS_VBL);
+        // Map size 64x32, base 0
+        self.vdc.registers[0x09] = 0x0010;
+        // Palette: simple gradient
+        for (i, slot) in self.vce.palette.iter_mut().enumerate() {
+            *slot = ((i as u16 & 0x0F) << 8) | (((i as u16 >> 4) & 0x0F) << 4) | (i as u16 & 0x0F);
+        }
+        // Tiles: simple 8x8 patterns
+        for tile in 0..0x200 {
+            for row in 0..8 {
+                let pattern = (((tile + row) & 1) * 0xFF) as u16;
+                let addr = tile * 8 + row;
+                if let Some(slot) = self.vdc.vram.get_mut(addr) {
+                    *slot = pattern;
+                }
+            }
+        }
+        // BAT: sequential tiles
+        let (map_w, map_h) = self.vdc.map_dimensions();
+        let base = self.vdc.map_base_address();
+        let mask = self.vdc.vram.len() - 1;
+        for y in 0..map_h {
+            for x in 0..map_w {
+                let idx = ((y * map_w + x) & 0x7FF) as u16;
+                let addr = (base + ((y * map_w + x) % 0x400)) & mask;
+                self.vdc.vram[addr] = idx;
+            }
+        }
+        // SATB: place one sprite in corner
+        self.vdc.satb[0] = 0; // y
+        self.vdc.satb[1] = 0; // x
+        self.vdc.satb[2] = 0; // pattern/cg
+        self.vdc.satb[3] = 0; // attr
+        self.frame_ready = true;
     }
 
     fn record_io_write(&mut self, offset: u16) {
@@ -962,8 +1644,16 @@ impl Bus {
         self.vce_last_control_high_max
     }
 
+    pub fn vce_data_high_without_low(&self) -> u64 {
+        self.vce.data_high_without_low()
+    }
+
     pub fn vdc_alias_write_counts(&self) -> &[u64; 0x20] {
         &self.vdc_alias_write_counts
+    }
+
+    pub fn vdc_select_value_counts(&self) -> &[u64; 0x20] {
+        &self.vdc_select_value_counts
     }
 
     pub fn vdc_r05_low_writes(&self) -> u64 {
@@ -976,6 +1666,55 @@ impl Bus {
 
     pub fn vdc_last_r05_low(&self) -> u8 {
         self.vdc.last_r05_low()
+    }
+
+    pub fn vdc_r05_low_value_counts(&self) -> &[u64; 0x100] {
+        self.vdc.r05_low_value_counts()
+    }
+
+    pub fn vdc_r05_high_value_counts(&self) -> &[u64; 0x100] {
+        self.vdc.r05_high_value_counts()
+    }
+
+    pub fn vdc_vram_data_low_writes(&self) -> u64 {
+        self.vdc.vram_data_low_writes()
+    }
+
+    pub fn vdc_vram_data_high_writes(&self) -> u64 {
+        self.vdc.vram_data_high_writes()
+    }
+
+    pub fn vdc_vram_data_high_without_low(&self) -> u64 {
+        self.vdc.vram_data_high_without_low()
+    }
+
+    pub fn vdc_set_write_range(&mut self, start: u16, end: u16) {
+        self.vdc.vram_write_range_start = start;
+        self.vdc.vram_write_range_end = end;
+        self.vdc.vram_write_range_count = 0;
+    }
+
+    pub fn vdc_write_range_count(&self) -> u64 {
+        self.vdc.vram_write_range_count
+    }
+
+    pub fn vdc_enable_mawr_log(&mut self, start: u16, end: u16) {
+        self.vdc.mawr_log.clear();
+        self.vdc.mawr_log_start = start;
+        self.vdc.mawr_log_end = end;
+    }
+
+    pub fn vdc_take_mawr_log(&mut self) -> Vec<u16> {
+        std::mem::take(&mut self.vdc.mawr_log)
+    }
+
+    pub fn vdc_enable_write_log(&mut self, limit: usize) {
+        self.vdc.vram_write_log.clear();
+        self.vdc.vram_write_log_limit = limit;
+    }
+
+    pub fn vdc_take_write_log(&mut self) -> Vec<(u16, u16)> {
+        std::mem::take(&mut self.vdc.vram_write_log)
     }
 
     pub fn vdc_control_write_count(&self) -> u64 {
@@ -992,6 +1731,30 @@ impl Bus {
 
     pub fn vdc_satb_source(&self) -> u16 {
         self.vdc.satb_source()
+    }
+
+    pub fn vdc_satb_nonzero_words(&self) -> usize {
+        self.vdc.satb.iter().filter(|&&word| word != 0).count()
+    }
+
+    pub fn vdc_satb_word(&self, index: usize) -> u16 {
+        self.vdc.satb.get(index).copied().unwrap_or(0)
+    }
+
+    pub fn vdc_scroll_line(&self, line: usize) -> (u16, u16) {
+        self.vdc.scroll_line(line)
+    }
+
+    pub fn vdc_scroll_line_valid(&self, line: usize) -> bool {
+        self.vdc.scroll_line_valid(line)
+    }
+
+    pub fn vdc_zoom_line(&self, line: usize) -> (u16, u16) {
+        self.vdc.zoom_line(line)
+    }
+
+    pub fn vdc_control_line(&self, line: usize) -> u16 {
+        self.vdc.control_line(line)
     }
 
     pub fn vdc_cram_last_source(&self) -> u16 {
@@ -1129,10 +1892,14 @@ impl Bus {
     }
 
     fn decode_control_register(offset: usize) -> Option<ControlRegister> {
-        if (HW_IRQ_BASE..=HW_IRQ_BASE + 0x03FF).contains(&offset) {
-            match offset & 0x03 {
+        if (HW_TIMER_BASE..=HW_TIMER_BASE + 0x03FF).contains(&offset) {
+            match offset & 0x01 {
                 0x00 => Some(ControlRegister::TimerCounter),
                 0x01 => Some(ControlRegister::TimerControl),
+                _ => None,
+            }
+        } else if (HW_IRQ_BASE..=HW_IRQ_BASE + 0x03FF).contains(&offset) {
+            match offset & 0x03 {
                 0x02 => Some(ControlRegister::IrqMask),
                 0x03 => Some(ControlRegister::IrqStatus),
                 _ => None,
@@ -1159,33 +1926,83 @@ impl Bus {
     }
 
     fn enqueue_audio_samples(&mut self, phi_cycles: u32) {
-        self.audio_phi_accumulator = self.audio_phi_accumulator.saturating_add(phi_cycles);
-        while self.audio_phi_accumulator >= PHI_CYCLES_PER_SAMPLE {
-            self.audio_phi_accumulator -= PHI_CYCLES_PER_SAMPLE;
+        self.audio_phi_accumulator = self
+            .audio_phi_accumulator
+            .saturating_add(phi_cycles as u64 * AUDIO_SAMPLE_RATE as u64);
+        while self.audio_phi_accumulator >= MASTER_CLOCK_HZ as u64 {
+            self.audio_phi_accumulator -= MASTER_CLOCK_HZ as u64;
             let sample = self.psg.generate_sample();
             self.audio_buffer.push(sample);
         }
     }
 
     fn render_frame_from_vram(&mut self) {
+        // NOTE: restore_bios_font_tiles() removed.
+        // Games load their own fonts from ROM (e.g. Kato-chan Ken-chan at $E583).
+        // The BIOS font restore was overwriting game fonts and is historically
+        // inaccurate for HuCard games that predate System Card 3.0.
         self.vdc.clear_frame_trigger();
-        let ctrl = self.vdc.control();
-        let display_on = (ctrl & 0x8000) != 0 || Self::env_force_display_on();
-        let sprites_enabled = (ctrl & (VDC_CTRL_ENABLE_SPRITES | VDC_CTRL_ENABLE_SPRITES_LEGACY))
-            != 0
-            || (display_on && (ctrl & (0x0200 | 0x0400)) != 0);
-        let background_enabled =
-            (ctrl & (VDC_CTRL_ENABLE_BACKGROUND | VDC_CTRL_ENABLE_BACKGROUND_LEGACY)) != 0
-                || (display_on && (ctrl & (0x0800 | 0x1000)) != 0);
-        if !sprites_enabled && !background_enabled {
-            let colour = self.vce.palette_rgb(0);
-            self.framebuffer.fill(colour);
+        let force_bg_only = std::env::var("PCE_DEBUG_BG_ONLY").is_ok();
+        let force_spr_only = std::env::var("PCE_DEBUG_SPR_ONLY").is_ok();
+        let mut background_line_enabled = [false; FRAME_HEIGHT];
+        let mut sprite_line_enabled = [false; FRAME_HEIGHT];
+        let mut active_window_line = [false; FRAME_HEIGHT];
+        for y in 0..FRAME_HEIGHT {
+            let in_active_window = self.vdc.output_row_in_active_window(y);
+            active_window_line[y] = in_active_window;
+            if !in_active_window {
+                continue;
+            }
+            let line_idx = self.vdc.line_state_index_for_frame_row(y);
+            let ctrl = self.vdc.control_values_for_line(line_idx);
+            let force_display_on = Self::env_force_display_on();
+            let mut sprites_enabled =
+                (ctrl & VDC_CTRL_ENABLE_SPRITES_LEGACY) != 0 || force_display_on;
+            let mut background_enabled =
+                (ctrl & VDC_CTRL_ENABLE_BACKGROUND_LEGACY) != 0 || force_display_on;
+            if force_bg_only {
+                sprites_enabled = false;
+                background_enabled = true;
+            }
+            if force_spr_only {
+                sprites_enabled = true;
+                background_enabled = false;
+            }
+            background_line_enabled[y] = background_enabled;
+            sprite_line_enabled[y] = sprites_enabled;
+        }
+        if !background_line_enabled.iter().any(|&enabled| enabled)
+            && !sprite_line_enabled.iter().any(|&enabled| enabled)
+        {
+            let background_colour = self.vce.palette_rgb(0);
+            let overscan_colour = self.vce.palette_rgb(0x100);
+            for y in 0..FRAME_HEIGHT {
+                let row_start = y * FRAME_WIDTH;
+                let row_end = row_start + FRAME_WIDTH;
+                let colour = if active_window_line[y] {
+                    background_colour
+                } else {
+                    overscan_colour
+                };
+                self.framebuffer[row_start..row_end].fill(colour);
+            }
             self.frame_ready = true;
             return;
         }
 
         if self.vdc.vram.is_empty() {
-            self.framebuffer.fill(self.vce.palette_rgb(0));
+            let background_colour = self.vce.palette_rgb(0);
+            let overscan_colour = self.vce.palette_rgb(0x100);
+            for y in 0..FRAME_HEIGHT {
+                let row_start = y * FRAME_WIDTH;
+                let row_end = row_start + FRAME_WIDTH;
+                let colour = if active_window_line[y] {
+                    background_colour
+                } else {
+                    overscan_colour
+                };
+                self.framebuffer[row_start..row_end].fill(colour);
+            }
             self.frame_ready = true;
             return;
         }
@@ -1194,8 +2011,8 @@ impl Bus {
         struct TileSample {
             chr0: u16,
             chr1: u16,
+            tile_base: usize,
             palette_base: usize,
-            h_flip: bool,
             priority: bool,
         }
 
@@ -1207,6 +2024,7 @@ impl Bus {
         self.vdc.clear_sprite_overflow();
 
         let background_colour = self.vce.palette_rgb(0);
+        let overscan_colour = self.vce.palette_rgb(0x100);
         if Self::env_force_test_palette() {
             // デバッグ: パレットを簡易グラデーションに初期化
             for i in 0..self.vce.palette.len() {
@@ -1224,19 +2042,38 @@ impl Bus {
                 }
             }
         }
-        if background_enabled {
+        if background_line_enabled.iter().any(|&enabled| enabled) {
             let mut tile_cache: Vec<TileSample> =
                 Vec::with_capacity((FRAME_WIDTH / TILE_WIDTH) + 2);
             let (map_width_tiles, map_height_tiles) = self.vdc.map_dimensions();
-            let map_width = map_width_tiles.max(1);
-            let map_height = map_height_tiles.max(1);
+            let map_width = Self::env_bg_map_width_override()
+                .unwrap_or(map_width_tiles)
+                .max(1);
+            let map_height = Self::env_bg_map_height_override()
+                .unwrap_or(map_height_tiles)
+                .max(1);
             let mwr = self.vdc.registers[0x09] as usize;
             let cg_mode_bit = (mwr >> 7) & 0x01;
             let pixel_width_mode = mwr & 0x03;
             let restrict_planes = pixel_width_mode == 0x03;
             let vram_mask = self.vdc.vram.len().saturating_sub(1);
+            let vram_byte_mask = self.vdc.vram.len().saturating_mul(2).saturating_sub(1);
+            let plane_major = Self::env_bg_plane_major();
 
             for y in 0..FRAME_HEIGHT {
+                let line_state_index = self.vdc.line_state_index_for_frame_row(y);
+                if !background_line_enabled[y] {
+                    let row_start = y * FRAME_WIDTH;
+                    let row_end = row_start + FRAME_WIDTH;
+                    let fill_colour = if active_window_line[y] {
+                        background_colour
+                    } else {
+                        overscan_colour
+                    };
+                    self.framebuffer[row_start..row_end].fill(fill_colour);
+                    continue;
+                }
+                let active_row = self.vdc.active_row_for_output_row(y).unwrap_or(0);
                 if Self::env_force_test_palette() {
                     // パレットを毎行クリアして強制表示色を維持
                     for i in 0..self.vce.palette.len() {
@@ -1246,14 +2083,33 @@ impl Bus {
                         }
                     }
                 }
-                let (x_scroll, y_scroll) = self.vdc.scroll_values_for_line(y);
-                let (zoom_x_raw, zoom_y_raw) = self.vdc.zoom_values_for_line(y);
+                let (x_scroll, y_scroll) = self.vdc.scroll_values_for_line(line_state_index);
+                let (zoom_x_raw, zoom_y_raw) = self.vdc.zoom_values_for_line(line_state_index);
                 let step_x = Vdc::zoom_step_value(zoom_x_raw);
                 let step_y = Vdc::zoom_step_value(zoom_y_raw);
+                // BG Y scroll: the first active line displays BYR, each
+                // subsequent active line increments by 1 (done via active_row).
+                let y_origin_bias = 0i32;
+                let effective_y_scroll = y_scroll as i32;
                 let vram = &self.vdc.vram;
+                let read_vram_byte = |byte_addr: usize| -> u8 {
+                    let word = vram[(byte_addr >> 1) & vram_mask];
+                    if (byte_addr & 1) == 0 {
+                        (word & 0x00FF) as u8
+                    } else {
+                        (word >> 8) as u8
+                    }
+                };
+                let swap_words = Self::env_bg_swap_words();
+                let swap_bytes = Self::env_bg_swap_bytes();
+                let bit_lsb = Self::env_bg_bit_lsb();
                 let start_x_fp = (x_scroll as usize) << 4;
-                let sample_y_fp = ((y_scroll as usize) << 4) + step_y * y;
-                let sample_y = sample_y_fp >> 4;
+                let sample_y_fp = ((effective_y_scroll + y_origin_bias) << 4)
+                    + (step_y as i32 * active_row as i32);
+                let sample_y = {
+                    let raw = (sample_y_fp >> 4) + Self::env_bg_y_bias();
+                    raw.rem_euclid((map_height * TILE_HEIGHT) as i32) as usize
+                };
                 let tile_row = (sample_y / TILE_HEIGHT) % map_height;
                 let line_in_tile = (sample_y % TILE_HEIGHT) as usize;
                 let start_sample_x = start_x_fp >> 4;
@@ -1269,34 +2125,58 @@ impl Bus {
 
                 for tile_offset in 0..tiles_needed {
                     let tile_col = (start_tile_int + tile_offset) % map_width;
-                    let map_addr = self.vdc.map_entry_address(tile_row, tile_col);
-                    let tile_entry = vram.get(map_addr & vram_mask).copied().unwrap_or(0);
-                    let tile_id = (tile_entry & 0x03FF) as usize;
-                    let palette_bank = ((tile_entry >> 12) & 0x0F) as usize;
-                    let h_flip = (tile_entry & 0x0400) != 0;
-                    let v_flip = (tile_entry & 0x0800) != 0;
-                    let tile_base = (tile_id * 16) & vram_mask;
-                    let row_index = if v_flip {
-                        TILE_HEIGHT - 1 - line_in_tile
-                    } else {
-                        line_in_tile
+                    let map_addr = {
+                        let raw = self.vdc.map_entry_address(tile_row, tile_col) as i32
+                            + Self::env_bg_map_base_bias();
+                        raw.rem_euclid(self.vdc.vram.len() as i32) as usize
                     };
-                    let row_addr = (tile_base + row_index) & vram_mask;
-                    let mut chr0 = vram.get(row_addr).copied().unwrap_or(0);
-                    let mut chr1 = vram.get((row_addr + 8) & vram_mask).copied().unwrap_or(0);
+                    let tile_entry = vram.get(map_addr & vram_mask).copied().unwrap_or(0);
+                    let tile_mask = if Self::env_bg_tile12() {
+                        0x0FFF
+                    } else {
+                        0x07FF
+                    };
+                    let tile_id = (tile_entry & tile_mask) as usize;
+                    let palette_bank = ((tile_entry >> 12) & 0x0F) as usize;
+                    let tile_base = ((tile_id as i32 * 16 + Self::env_bg_tile_base_bias())
+                        .rem_euclid(self.vdc.vram.len() as i32))
+                        as usize;
+                    let row_index = line_in_tile;
+                    let (row_addr_a, row_addr_b) = if Self::env_bg_row_words() {
+                        let a = (tile_base + row_index * 2) & vram_mask;
+                        (a, (a + 1) & vram_mask)
+                    } else {
+                        let a = (tile_base + row_index) & vram_mask;
+                        (a, (a + 8) & vram_mask)
+                    };
+                    let mut chr_a = vram.get(row_addr_a).copied().unwrap_or(0);
+                    let mut chr_b = vram.get(row_addr_b).copied().unwrap_or(0);
+                    if swap_words {
+                        std::mem::swap(&mut chr_a, &mut chr_b);
+                    }
+                    if Self::env_bg_force_chr0_only() {
+                        chr_b = 0;
+                    }
+                    if Self::env_bg_force_chr1_only() {
+                        chr_a = 0;
+                    }
+                    if Self::env_bg_force_tile0_zero() && tile_id == 0 {
+                        chr_a = 0;
+                        chr_b = 0;
+                    }
                     if restrict_planes {
                         if cg_mode_bit == 0 {
-                            chr1 = 0;
+                            chr_b = 0;
                         } else {
-                            chr0 = 0;
+                            chr_a = 0;
                         }
                     }
                     tile_cache.push(TileSample {
-                        chr0,
-                        chr1,
+                        chr0: chr_a,
+                        chr1: chr_b,
+                        tile_base,
                         palette_base: (palette_bank << 4) & 0x1F0,
-                        h_flip,
-                        priority: (tile_entry & 0x8000) != 0,
+                        priority: !Self::env_bg_tile12() && (tile_entry & 0x0800) != 0,
                     });
                 }
 
@@ -1309,19 +2189,63 @@ impl Bus {
                     let tile_offset = tile_idx_int.saturating_sub(start_tile_int);
                     let sample = tile_cache.get(tile_offset).copied().unwrap_or_default();
                     let intra_tile_x = sample_x % TILE_WIDTH;
-                    let bit_index = if sample.h_flip {
-                        TILE_WIDTH - 1 - intra_tile_x
+                    let bit_index = intra_tile_x;
+                    let shift = if bit_lsb { bit_index } else { 7 - bit_index };
+                    let (plane0, plane1, plane2, plane3) = if plane_major {
+                        let base_byte = (sample.tile_base << 1) & vram_byte_mask;
+                        let row = line_in_tile;
+                        let mut planes = [
+                            read_vram_byte((base_byte + row) & vram_byte_mask),
+                            read_vram_byte((base_byte + 8 + row) & vram_byte_mask),
+                            read_vram_byte((base_byte + 16 + row) & vram_byte_mask),
+                            read_vram_byte((base_byte + 24 + row) & vram_byte_mask),
+                        ];
+                        if swap_words {
+                            planes.swap(0, 2);
+                            planes.swap(1, 3);
+                        }
+                        if swap_bytes {
+                            planes.swap(0, 1);
+                            planes.swap(2, 3);
+                        }
+                        if restrict_planes {
+                            if cg_mode_bit == 0 {
+                                planes[2] = 0;
+                                planes[3] = 0;
+                            } else {
+                                planes[0] = 0;
+                                planes[1] = 0;
+                            }
+                        }
+                        (
+                            ((planes[0] >> shift) & 0x01) as u8,
+                            ((planes[1] >> shift) & 0x01) as u8,
+                            ((planes[2] >> shift) & 0x01) as u8,
+                            ((planes[3] >> shift) & 0x01) as u8,
+                        )
+                    } else if swap_bytes {
+                        (
+                            ((sample.chr0 >> (shift + 8)) & 0x01) as u8,
+                            ((sample.chr0 >> shift) & 0x01) as u8,
+                            ((sample.chr1 >> (shift + 8)) & 0x01) as u8,
+                            ((sample.chr1 >> shift) & 0x01) as u8,
+                        )
                     } else {
-                        intra_tile_x
+                        (
+                            ((sample.chr0 >> shift) & 0x01) as u8,
+                            ((sample.chr0 >> (shift + 8)) & 0x01) as u8,
+                            ((sample.chr1 >> shift) & 0x01) as u8,
+                            ((sample.chr1 >> (shift + 8)) & 0x01) as u8,
+                        )
                     };
-                    let shift = 7 - bit_index;
-                    let plane0 = ((sample.chr0 >> shift) & 0x01) as u8;
-                    let plane1 = ((sample.chr0 >> (shift + 8)) & 0x01) as u8;
-                    let plane2 = ((sample.chr1 >> shift) & 0x01) as u8;
-                    let plane3 = ((sample.chr1 >> (shift + 8)) & 0x01) as u8;
                     let pixel = plane0 | (plane1 << 1) | (plane2 << 2) | (plane3 << 3);
                     if pixel == 0 {
-                        self.framebuffer[screen_index] = background_colour;
+                        if Self::env_bg_palette_zero_visible() {
+                            let colour_idx = sample.palette_base & 0x1FF;
+                            self.framebuffer[screen_index] = self.vce.palette_rgb(colour_idx);
+                        } else {
+                            self.framebuffer[screen_index] = background_colour;
+                        }
                     } else {
                         self.bg_opaque[screen_index] = true;
                         self.bg_priority[screen_index] = sample.priority;
@@ -1334,125 +2258,210 @@ impl Bus {
         } else {
             self.framebuffer.fill(background_colour);
         }
-        if sprites_enabled {
-            self.render_sprites();
+        if sprite_line_enabled.iter().any(|&enabled| enabled) {
+            self.render_sprites(&sprite_line_enabled);
         }
         self.frame_ready = true;
     }
 
-    fn render_sprites(&mut self) {
+    fn render_sprites(&mut self, line_enabled: &[bool; FRAME_HEIGHT]) {
         if self.vdc.vram.is_empty() {
             return;
         }
+        #[derive(Clone, Copy)]
+        struct LineSprite {
+            x: i32,
+            visible_width: usize,
+            full_width: usize,
+            width_cells: usize,
+            src_tile_y: usize,
+            row_in_tile: usize,
+            pattern_base_index: usize,
+            palette_base: usize,
+            high_priority: bool,
+            h_flip: bool,
+            use_upper_cg_pair: bool,
+        }
+
         let vram = &self.vdc.vram;
         let vram_mask = vram.len().saturating_sub(1);
         let mut overflow_detected = false;
+        let mwr = self.vdc.registers[0x09];
+        let sprite_dot_period = (mwr >> 2) & 0x03;
+        let cg_mode_enabled = sprite_dot_period >= 0x02;
+        let reverse_priority = Self::env_sprite_reverse_priority();
+        let no_sprite_line_limit = Self::env_no_sprite_line_limit();
+        let pattern_raw_index = Self::env_sprite_pattern_raw_index();
+        let row_interleaved = Self::env_sprite_row_interleaved();
+        let sprite_max_entries = Self::env_sprite_max_entries().unwrap_or(SPRITE_COUNT);
 
-        for sprite in (0..SPRITE_COUNT).rev() {
-            let base = sprite * 4;
-            let y_word = self.vdc.satb.get(base).copied().unwrap_or(0);
-            let tile_word = self.vdc.satb.get(base + 1).copied().unwrap_or(0);
-            let attr_word = self.vdc.satb.get(base + 2).copied().unwrap_or(0);
-            let x_word = self.vdc.satb.get(base + 3).copied().unwrap_or(0);
-
-            let y = (y_word & 0x03FF) as i32 - 64;
-            let x = (x_word & 0x03FF) as i32 - 32;
-            let width_cells = if (attr_word & 0x0100) != 0 { 2 } else { 1 };
-            let height_code = ((y_word >> 12) & 0x03) as usize;
-            let height_cells = match height_code {
-                0 => 1,
-                1 => 2,
-                2 => 3,
-                _ => 4,
+        for dest_row in 0..FRAME_HEIGHT {
+            if !line_enabled[dest_row] {
+                continue;
+            }
+            let Some(active_row) = self.vdc.active_row_for_output_row(dest_row) else {
+                continue;
             };
-            let tiles_wide = width_cells * 2;
-            let tiles_high = height_cells * 2;
-            let sprite_width = (tiles_wide * TILE_WIDTH) as i32;
-            let sprite_height = (tiles_high * TILE_HEIGHT) as i32;
+            let mut line_sprites = Vec::with_capacity(16);
+            let mut slots_used = 0u8;
+            let scanline_y = active_row as i32;
 
-            if x >= FRAME_WIDTH as i32 || y >= FRAME_HEIGHT as i32 {
-                continue;
-            }
-            if x + sprite_width <= 0 || y + sprite_height <= 0 {
-                continue;
-            }
+            for sprite_idx in 0..SPRITE_COUNT.min(sprite_max_entries) {
+                let sprite = if reverse_priority {
+                    SPRITE_COUNT - 1 - sprite_idx
+                } else {
+                    sprite_idx
+                };
+                let base = sprite * 4;
+                let y_word = self.vdc.satb.get(base).copied().unwrap_or(0);
+                let x_word = self.vdc.satb.get(base + 1).copied().unwrap_or(0);
+                let pattern_word = self.vdc.satb.get(base + 2).copied().unwrap_or(0);
+                let attr_word = self.vdc.satb.get(base + 3).copied().unwrap_or(0);
 
-            let tile_base_index = (tile_word & 0x07FF) as usize;
-            let palette_base = ((attr_word & 0x000F) as usize) << 4;
-            let sprite_behind_bg = (attr_word & 0x0080) != 0;
-            let h_flip = (attr_word & 0x0400) != 0;
-            let v_flip = (attr_word & 0x0200) != 0;
-
-            for tile_y in 0..tiles_high {
-                let row_base = y + (tile_y * TILE_HEIGHT) as i32;
-                if row_base >= FRAME_HEIGHT as i32 || row_base + TILE_HEIGHT as i32 <= 0 {
+                let y = (y_word & 0x03FF) as i32 - 64;
+                let x = (x_word & 0x03FF) as i32 - 32;
+                let width_cells = if (attr_word & 0x0100) != 0 {
+                    2usize
+                } else {
+                    1usize
+                };
+                let height_code = ((attr_word >> 12) & 0x03) as usize;
+                let height_cells = match height_code {
+                    0 => 1,
+                    1 => 2,
+                    _ => 4,
+                };
+                let full_width = width_cells * SPRITE_PATTERN_WIDTH;
+                let full_height = height_cells * SPRITE_PATTERN_HEIGHT;
+                if scanline_y < y || scanline_y >= y + full_height as i32 {
                     continue;
                 }
-                let src_tile_y = if v_flip {
-                    tiles_high - 1 - tile_y
+
+                if !no_sprite_line_limit && slots_used >= 16 {
+                    overflow_detected = true;
+                    continue;
+                }
+                let available_slots = if no_sprite_line_limit {
+                    width_cells
                 } else {
-                    tile_y
+                    (16 - slots_used) as usize
+                };
+                let visible_cells = width_cells.min(available_slots);
+                if !no_sprite_line_limit && visible_cells < width_cells {
+                    overflow_detected = true;
+                }
+                slots_used = slots_used.saturating_add(visible_cells as u8);
+
+                let mut pattern_base_index = if pattern_raw_index {
+                    (pattern_word & 0x03FF) as usize
+                } else {
+                    ((pattern_word >> 1) & 0x03FF) as usize
+                };
+                if width_cells == 2 {
+                    pattern_base_index &= !0x0001;
+                }
+                pattern_base_index = match height_code {
+                    1 => pattern_base_index & !0x0002,
+                    2 | 3 => pattern_base_index & !0x0006,
+                    _ => pattern_base_index,
                 };
 
-                for row in 0..TILE_HEIGHT {
-                    let dest_y = row_base + row as i32;
-                    if dest_y < 0 || dest_y >= FRAME_HEIGHT as i32 {
+                let v_flip = (attr_word & 0x8000) != 0;
+                let local_y = (scanline_y - y) as usize;
+                let src_y = if v_flip {
+                    full_height - 1 - local_y
+                } else {
+                    local_y
+                };
+                let src_tile_y = src_y / SPRITE_PATTERN_HEIGHT;
+                let row_in_tile = src_y % SPRITE_PATTERN_HEIGHT;
+
+                line_sprites.push(LineSprite {
+                    x,
+                    visible_width: visible_cells * SPRITE_PATTERN_WIDTH,
+                    full_width,
+                    width_cells,
+                    src_tile_y,
+                    row_in_tile,
+                    pattern_base_index,
+                    palette_base: 0x100usize | (((attr_word & 0x000F) as usize) << 4),
+                    high_priority: (attr_word & 0x0080) != 0,
+                    h_flip: (attr_word & 0x0800) != 0,
+                    use_upper_cg_pair: (pattern_word & 0x0001) != 0,
+                });
+            }
+
+            self.sprite_line_counts[dest_row] = slots_used;
+
+            for screen_x in 0..FRAME_WIDTH {
+                let offset = dest_row * FRAME_WIDTH + screen_x;
+                for sprite in line_sprites.iter() {
+                    if (screen_x as i32) < sprite.x
+                        || (screen_x as i32) >= sprite.x + sprite.visible_width as i32
+                    {
                         continue;
                     }
 
-                    let dest_row = dest_y as usize;
-                    let count = &mut self.sprite_line_counts[dest_row];
-                    if *count >= 16 {
-                        overflow_detected = true;
-                        continue;
-                    }
-                    if *count < u8::MAX {
-                        *count += 1;
-                    }
+                    let local_x = (screen_x as i32 - sprite.x) as usize;
+                    let src_x = if sprite.h_flip {
+                        sprite.full_width - 1 - local_x
+                    } else {
+                        local_x
+                    };
+                    let src_tile_x = src_x / SPRITE_PATTERN_WIDTH;
+                    let col_in_tile = src_x % SPRITE_PATTERN_WIDTH;
+                    let pattern_index = sprite.pattern_base_index
+                        + sprite.src_tile_y * sprite.width_cells
+                        + src_tile_x;
+                    let pattern_base = (pattern_index * SPRITE_PATTERN_WORDS) & vram_mask;
 
-                    let sample_row = if v_flip { TILE_HEIGHT - 1 - row } else { row };
+                    let (plane0_word, plane1_word, plane2_word, plane3_word) = if row_interleaved {
+                        let row_base = (pattern_base + sprite.row_in_tile * 4) & vram_mask;
+                        (
+                            vram[row_base],
+                            vram[(row_base + 1) & vram_mask],
+                            vram[(row_base + 2) & vram_mask],
+                            vram[(row_base + 3) & vram_mask],
+                        )
+                    } else {
+                        (
+                            vram[(pattern_base + sprite.row_in_tile) & vram_mask],
+                            vram[(pattern_base + 16 + sprite.row_in_tile) & vram_mask],
+                            vram[(pattern_base + 32 + sprite.row_in_tile) & vram_mask],
+                            vram[(pattern_base + 48 + sprite.row_in_tile) & vram_mask],
+                        )
+                    };
+                    let shift = 15usize.saturating_sub(col_in_tile);
+                    let mut plane0 = ((plane0_word >> shift) & 0x01) as u8;
+                    let mut plane1 = ((plane1_word >> shift) & 0x01) as u8;
+                    let mut plane2 = ((plane2_word >> shift) & 0x01) as u8;
+                    let mut plane3 = ((plane3_word >> shift) & 0x01) as u8;
 
-                    for tile_x in 0..tiles_wide {
-                        let col_base = x + (tile_x * TILE_WIDTH) as i32;
-                        if col_base >= FRAME_WIDTH as i32 || col_base + TILE_WIDTH as i32 <= 0 {
-                            continue;
-                        }
-                        let src_tile_x = if h_flip {
-                            tiles_wide - 1 - tile_x
+                    if cg_mode_enabled {
+                        if sprite.use_upper_cg_pair {
+                            plane0 = plane2;
+                            plane1 = plane3;
+                            plane2 = 0;
+                            plane3 = 0;
                         } else {
-                            tile_x
-                        };
-                        let tile_index = tile_base_index + src_tile_y * tiles_wide + src_tile_x;
-                        let tile_base = (tile_index * 16) & vram_mask;
-                        let chr0 = vram[(tile_base + sample_row) & vram_mask];
-                        let chr1 = vram[(tile_base + sample_row + 8) & vram_mask];
-
-                        for col in 0..TILE_WIDTH {
-                            let dest_x = col_base + col as i32;
-                            if dest_x < 0 || dest_x >= FRAME_WIDTH as i32 {
-                                continue;
-                            }
-                            let sample_col = if h_flip { TILE_WIDTH - 1 - col } else { col };
-                            let shift = 7 - sample_col;
-                            let plane0 = ((chr0 >> shift) & 0x01) as u8;
-                            let plane1 = ((chr0 >> (shift + 8)) & 0x01) as u8;
-                            let plane2 = ((chr1 >> shift) & 0x01) as u8;
-                            let plane3 = ((chr1 >> (shift + 8)) & 0x01) as u8;
-                            let pixel = plane0 | (plane1 << 1) | (plane2 << 2) | (plane3 << 3);
-                            if pixel == 0 {
-                                continue;
-                            }
-                            let offset = dest_row * FRAME_WIDTH + dest_x as usize;
-                            if sprite_behind_bg && self.bg_opaque[offset] {
-                                continue;
-                            }
-                            if self.bg_priority[offset] {
-                                continue;
-                            }
-                            let colour_index = (palette_base | pixel as usize) & 0x1FF;
-                            self.framebuffer[offset] = self.vce.palette_rgb(colour_index);
+                            plane2 = 0;
+                            plane3 = 0;
                         }
                     }
+
+                    let pixel = plane0 | (plane1 << 1) | (plane2 << 2) | (plane3 << 3);
+                    if pixel == 0 {
+                        continue;
+                    }
+
+                    let bg_opaque = self.bg_opaque[offset];
+                    let bg_forces_front = self.bg_priority[offset];
+                    if !bg_opaque || (sprite.high_priority && !bg_forces_front) {
+                        let colour_index = (sprite.palette_base | pixel as usize) & 0x1FF;
+                        self.framebuffer[offset] = self.vce.palette_rgb(colour_index);
+                    }
+                    // The first opaque sprite pixel wins, regardless of BG blend result.
+                    break;
                 }
             }
         }
@@ -1560,9 +2569,15 @@ impl Bus {
         // via 0x2002/0x2003/0x200A/0x200B, so ensure any offset whose low two
         // bits are 0/1 goes to Control, 2/3 goes to Data.
         // For debug `PCE_VDC_ULTRA_MIRROR`, widen to the entire hardware page.
+        if Bus::env_vdc_force_hot_ports() && Self::force_map_candidates(offset) {
+            return Some(Self::vdc_port_from_low_bits(offset));
+        }
         let mirrored = offset & 0x1FFF;
         let ultra = Self::env_vdc_ultra_mirror();
         let catchall = Self::env_vdc_catchall();
+        if Self::env_vdc_force_hot_ports() && Self::force_map_candidates(offset) {
+            return Some(Self::vdc_port_from_low_bits(offset));
+        }
         if !catchall {
             if !Self::env_extreme_mirror() && !ultra && mirrored >= 0x0400 {
                 return None;
@@ -1579,6 +2594,29 @@ impl Bus {
             0x02 | 0x03 => Some(VdcPort::Data),
             _ => None,
         }
+    }
+
+    #[inline]
+    fn vdc_port_from_low_bits(offset: usize) -> VdcPort {
+        if offset & 0x02 != 0 {
+            VdcPort::Data
+        } else {
+            VdcPort::Control
+        }
+    }
+
+    fn force_map_candidates(offset: usize) -> bool {
+        // Small list of hot addresses observed in HuCARD traces (0x2200/2211,
+        // 0x2002/200A, 0x2017..0x201D, 0x0800..) that may mirror VDC ports.
+        const HOT: &[usize] = &[
+            0x0000, 0x0002, 0x0003, 0x0800, 0x0802, 0x0803, 0x0804, 0x0805, 0x0807, 0x2000, 0x2001,
+            0x2002, 0x2003, 0x200A, 0x200B, 0x2010, 0x2011, 0x2012, 0x2016, 0x2017, 0x2018, 0x2019,
+            0x201A, 0x201B, 0x201C, 0x201D, 0x2048, 0x2049, 0x204A, 0x204B, 0x204D, 0x2200, 0x2201,
+            0x2202, 0x2209, 0x220A, 0x220B, 0x220C, 0x220D, 0x220F, 0x2210, 0x2211, 0x2212, 0x2215,
+            0x2217, 0x2219, 0x221A, 0x221D, 0x2220, 0x2226, 0x2227, 0x2228, 0x2229, 0x222A, 0x222B,
+            0x222D, 0x222E, 0x0A3A, 0x0A3B, 0x0A3C, 0x0A3D,
+        ];
+        HOT.iter().any(|&h| (offset & 0x3FFF) == h)
     }
 
     #[cfg(feature = "trace_hw_writes")]
@@ -1630,30 +2668,8 @@ impl Bus {
         }
         match offset {
             0x0400..=0x07FF | 0x1C40..=0x1C47 => {
-                let sub = offset & 0x0003;
-                let mirror_bit2 = (offset & 0x0004) != 0;
-                let swap = Self::vce_ports_swapped();
-                let mirror_route = Self::env_vce_route_mirror_as_data();
-                let mut is_data = if swap {
-                    (sub & 0x02) == 0
-                } else {
-                    (sub & 0x02) != 0
-                };
-                if !is_data && mirror_bit2 && mirror_route {
-                    is_data = true;
-                }
-                let is_high = (sub & 0x01) != 0;
-                if is_data {
-                    if is_high {
-                        self.vce.read_data_high()
-                    } else {
-                        self.vce.read_data_low()
-                    }
-                } else if is_high {
-                    self.vce.read_control_high()
-                } else {
-                    self.vce.read_control_low()
-                }
+                let sub = (offset & 0x0007) as u16;
+                self.read_vce_port(sub)
             }
             0x0800..=0x0BFF | 0x1C60..=0x1C63 => match offset & 0x03 {
                 0x00 => self.psg.read_address(),
@@ -1661,6 +2677,13 @@ impl Bus {
                 0x02 => self.psg.read_data(),
                 _ => self.psg.read_status(),
             },
+            0x0C00..=0x0FFF => {
+                if let Some(value) = self.read_control_register(offset) {
+                    value
+                } else {
+                    self.io[offset]
+                }
+            }
             0x1000..=0x13FF => {
                 if let Some(value) = self.io_port.read(offset - HW_JOYPAD_BASE) {
                     value
@@ -1755,7 +2778,7 @@ impl Bus {
         match offset {
             // VCE mirrors also appear at 0x1C40–0x1C43 in some docs; treat them the same.
             0x0400..=0x07FF | 0x1C40..=0x1C47 => {
-                let sub = (offset & 0x0003) as u16;
+                let sub = (offset & 0x0007) as u16;
                 self.write_vce_port(sub, value);
             }
             // PSG mirrors at 0x1C60–0x1C63.
@@ -1764,7 +2787,7 @@ impl Bus {
                 0x01 => self.psg.write_data(value),
                 _ => self.io[offset] = value,
             },
-            0x0C00..=0x0C03 | 0x1400..=0x1403 | 0x1C10..=0x1C13 => {
+            0x0C00..=0x0FFF | 0x1400..=0x17FF | 0x1C10..=0x1C13 => {
                 // Timer/IRQ registers (mirrored)
                 if !self.write_control_register(offset, value) {
                     self.io[offset] = value;
@@ -1796,55 +2819,45 @@ impl Bus {
     }
 
     #[inline]
+    fn read_vce_port(&mut self, addr: u16) -> u8 {
+        match addr & 0x0007 {
+            0x00 => self.vce.read_control_low(),
+            0x01 => self.vce.read_control_high(),
+            0x02 => self.vce.read_address_low(),
+            0x03 => self.vce.read_address_high(),
+            0x04 => self.vce.read_data_low(),
+            0x05 => self.vce.read_data_high(),
+            _ => 0xFF,
+        }
+    }
+
+    #[inline]
     fn write_vce_port(&mut self, addr: u16, value: u8) {
-        let sub = addr & 0x0003; // hardware decodes only A1..A0
-        let mirror_bit2 = (addr & 0x0004) != 0;
-        let free_pass = Self::env_vce_free_pass();
-        let swap = std::env::var("PCE_VCE_SUPER_SWAP").is_ok() || Self::vce_ports_swapped();
-        let force_data = Self::env_vce_force_data() || free_pass;
-        let mirror_route = Self::env_vce_route_mirror_as_data();
-
-        let is_data = if force_data {
-            true
-        } else if swap {
-            (sub & 0x02) == 0
-        } else {
-            (sub & 0x02) != 0
-        };
-        // デバッグ用: 0x0404/0405 など bit2=1 側をデータポートとして扱うオプション
-        let is_data = if !is_data && mirror_bit2 && mirror_route {
-            true
-        } else {
-            is_data
-        };
-
-        let is_high = if free_pass {
-            matches!(self.vce.write_phase, VcePhase::High)
-        } else if force_data {
-            // data強制時は write_phase に従う
-            matches!(self.vce.write_phase, VcePhase::High)
-        } else {
-            (sub & 0x01) != 0
-        };
         self.vce_write_count += 1;
-        if is_data {
-            self.vce_data_writes += 1;
-            if is_high {
-                self.vce.write_data_high(value);
-            } else {
-                self.vce.write_data_low(value);
+        match addr & 0x0007 {
+            0x00 => {
+                self.vce_control_writes += 1;
+                self.vce.write_control_low(value);
             }
-        } else {
-            self.vce_control_writes += 1;
-            if is_high {
+            0x01 => {
+                self.vce_control_writes += 1;
                 self.vce_last_control_high = value;
                 if value > self.vce_last_control_high_max {
                     self.vce_last_control_high_max = value;
                 }
                 self.vce.write_control_high(value);
-            } else {
-                self.vce.write_control_low(value);
             }
+            0x02 => self.vce.write_address_low(value),
+            0x03 => self.vce.write_address_high(value),
+            0x04 => {
+                self.vce_data_writes += 1;
+                self.vce.write_data_low(value);
+            }
+            0x05 => {
+                self.vce_data_writes += 1;
+                self.vce.write_data_high(value);
+            }
+            _ => {}
         }
     }
 
@@ -1901,12 +2914,12 @@ impl Bus {
         self.vdc.last_cram_length = raw_length;
         let mut words = raw_length as usize;
         if words == 0 {
-            words = 0x1_0000;
+            words = 0x200; // CRAMは最大512ワード
         }
         words = words.min(0x200);
 
         let mut src = self.vdc.marr & 0x7FFF;
-        let mut index = (self.vce.control as usize) & 0x01FF;
+        let mut index = (self.vce.address as usize) & 0x01FF;
 
         for _ in 0..words {
             let word = *self.vdc.vram.get(src as usize).unwrap_or(&0);
@@ -1919,7 +2932,7 @@ impl Bus {
 
         self.vdc.marr = src & 0x7FFF;
         self.vdc.registers[0x01] = self.vdc.marr;
-        self.vce.control = (self.vce.control & !0x01FF) | (index as u16);
+        self.vce.address = index as u16;
         let busy_cycles = (words as u32).saturating_mul(VDC_DMA_WORD_CYCLES);
         self.vdc.set_busy(busy_cycles);
         self.vdc.raise_status(VDC_STATUS_DV);
@@ -1936,34 +2949,25 @@ impl Bus {
             self.vdc.dma_destination,
             self.vdc.registers[0x12]
         );
-        let mut words = self.vdc.registers[0x12] as u32;
-        if words == 0 {
-            words = 0x1_0000;
-        }
-        if words == 0 {
-            return;
-        }
+        let original_len = self.vdc.registers[0x12];
+        let words = original_len as u32 + 1;
 
         let src_dec = self.vdc.dma_control & DMA_CTRL_SRC_DEC != 0;
         let dst_dec = self.vdc.dma_control & DMA_CTRL_DST_DEC != 0;
 
-        let mut src = self.vdc.dma_source;
+        let mut src = self.vdc.dma_source & 0x7FFF;
         let mut dst = self.vdc.dma_destination & 0x7FFF;
 
         self.vdc.vram_dma_count = self.vdc.vram_dma_count.saturating_add(1);
         self.vdc.last_vram_dma_source = src;
         self.vdc.last_vram_dma_destination = dst;
-        self.vdc.last_vram_dma_length = words.min(0xFFFF) as u16;
+        self.vdc.last_vram_dma_length = original_len;
 
         for _ in 0..words {
-            let value = self.dma_read_word(src);
+            let value = self.vdc.vram[(src as usize) & 0x7FFF];
             self.vdc.write_vram_dma_word(dst, value);
 
-            src = if src_dec {
-                src.wrapping_sub(2)
-            } else {
-                src.wrapping_add(2)
-            };
+            src = Vdc::advance_vram_addr(src, src_dec);
             dst = Vdc::advance_vram_addr(dst, dst_dec);
         }
 
@@ -1971,7 +2975,7 @@ impl Bus {
         self.vdc.dma_destination = dst;
         self.vdc.registers[0x10] = self.vdc.dma_source;
         self.vdc.registers[0x11] = self.vdc.dma_destination;
-        self.vdc.registers[0x12] = 0;
+        self.vdc.registers[0x12] = 0xFFFF;
 
         #[cfg(any(debug_assertions, feature = "trace_hw_writes"))]
         eprintln!(
@@ -1993,22 +2997,6 @@ impl Bus {
             }
             #[cfg(any(debug_assertions, feature = "trace_hw_writes"))]
             eprintln!("  DEBUG PCE_FORCE_CRAM_FROM_VRAM applied (first 512 words)");
-        }
-    }
-
-    fn dma_read_word(&mut self, addr: u16) -> u16 {
-        let lo = self.dma_read_byte(addr);
-        let hi = self.dma_read_byte(addr.wrapping_add(1));
-        u16::from_le_bytes([lo, hi])
-    }
-
-    fn dma_read_byte(&mut self, addr: u16) -> u8 {
-        let (mapping, offset) = self.resolve(addr);
-        match mapping {
-            BankMapping::Ram { base } => self.ram.get(base + offset).copied().unwrap_or(0),
-            BankMapping::Rom { base } => self.rom.get(base + offset).copied().unwrap_or(0),
-            BankMapping::CartRam { base } => self.cart_ram.get(base + offset).copied().unwrap_or(0),
-            BankMapping::Hardware => self.read(addr),
         }
     }
 
@@ -2099,12 +3087,15 @@ struct Vdc {
     scroll_line_y: [u16; LINES_PER_FRAME as usize],
     zoom_line_x: [u16; LINES_PER_FRAME as usize],
     zoom_line_y: [u16; LINES_PER_FRAME as usize],
+    control_line: [u16; LINES_PER_FRAME as usize],
     scroll_line_valid: [bool; LINES_PER_FRAME as usize],
+    vram_dma_request: bool,
     dcr_request: Option<u8>,
     cram_pending: bool,
     cram_dma_count: u64,
     control_write_count: u64,
     last_control_value: u16,
+    render_control_latch: u16,
     last_cram_source: u16,
     last_cram_length: u16,
     vram_dma_count: u64,
@@ -2118,6 +3109,28 @@ struct Vdc {
     r05_low_writes: u64,
     r05_high_writes: u64,
     last_r05_low: u8,
+    r05_low_value_counts: [u64; 0x100],
+    r05_high_value_counts: [u64; 0x100],
+    vram_data_low_writes: u64,
+    vram_data_high_writes: u64,
+    vram_data_high_without_low: u64,
+    /// Track writes to a specific VRAM address range (for debugging font loading).
+    vram_write_range_count: u64,
+    vram_write_range_start: u16,
+    vram_write_range_end: u16,
+    /// Debug: log MAWR register set operations in a specified range.
+    mawr_log: Vec<u16>,
+    mawr_log_start: u16,
+    mawr_log_end: u16,
+    /// Debug: log the first N VRAM writes (address, value).
+    vram_write_log: Vec<(u16, u16)>,
+    vram_write_log_limit: usize,
+    /// BIOS font tile patterns: 96 tiles (ASCII 0x20-0x7F), 16 VRAM words each.
+    /// Stored separately so they can be restored when game graphics overwrites them.
+    bios_font_tiles: Vec<[u16; 16]>,
+    /// Set when VRAM writes hit the font tile area, signalling that font tiles
+    /// may need restoration before the next render.
+    bios_font_dirty: bool,
     ignore_next_high_byte: bool,
     // Remember which register a low byte targeted so the paired high byte
     // commits to the same register even if ST0 is touched in between.
@@ -2140,12 +3153,23 @@ pub const VDC_STATUS_DS: u8 = 0x08;
 pub const VDC_STATUS_DV: u8 = 0x10;
 pub const VDC_STATUS_VBL: u8 = 0x20;
 pub const VDC_STATUS_BUSY: u8 = 0x40;
+const VDC_ACTIVE_COUNTER_BASE: usize = 0x40;
 const DMA_CTRL_IRQ_SATB: u16 = 0x0001;
 const DMA_CTRL_IRQ_VRAM: u16 = 0x0002;
 const DMA_CTRL_SRC_DEC: u16 = 0x0004;
 const DMA_CTRL_DST_DEC: u16 = 0x0008;
 const DMA_CTRL_SATB_AUTO: u16 = 0x0010;
 const VDC_VISIBLE_LINES: u16 = 240;
+const VDC_MAX_VBLANK_START_LINE: usize = (LINES_PER_FRAME as usize) - 2;
+
+#[derive(Clone, Copy)]
+struct VerticalWindow {
+    timing_programmed: bool,
+    active_start_line: usize,
+    active_line_count: usize,
+    post_active_overscan_lines: usize,
+    vblank_start_line: usize,
+}
 
 impl Vdc {
     fn new() -> Self {
@@ -2187,12 +3211,15 @@ impl Vdc {
             scroll_line_y: [0; LINES_PER_FRAME as usize],
             zoom_line_x: [0; LINES_PER_FRAME as usize],
             zoom_line_y: [0; LINES_PER_FRAME as usize],
+            control_line: [0; LINES_PER_FRAME as usize],
             scroll_line_valid: [false; LINES_PER_FRAME as usize],
+            vram_dma_request: false,
             dcr_request: None,
             cram_pending: false,
             cram_dma_count: 0,
             control_write_count: 0,
             last_control_value: 0,
+            render_control_latch: 0,
             last_cram_source: 0,
             last_cram_length: 0,
             vram_dma_count: 0,
@@ -2206,6 +3233,21 @@ impl Vdc {
             r05_low_writes: 0,
             r05_high_writes: 0,
             last_r05_low: 0,
+            r05_low_value_counts: [0; 0x100],
+            r05_high_value_counts: [0; 0x100],
+            vram_data_low_writes: 0,
+            vram_data_high_writes: 0,
+            vram_data_high_without_low: 0,
+            vram_write_range_count: 0,
+            vram_write_range_start: 0,
+            vram_write_range_end: 0,
+            mawr_log: Vec::new(),
+            mawr_log_start: 0,
+            mawr_log_end: 0,
+            vram_write_log: Vec::new(),
+            vram_write_log_limit: 0,
+            bios_font_tiles: Vec::new(),
+            bios_font_dirty: false,
             ignore_next_high_byte: false,
             pending_write_register: None,
             #[cfg(feature = "trace_hw_writes")]
@@ -2221,6 +3263,7 @@ impl Vdc {
         vdc.registers[0x04] = VDC_CTRL_ENABLE_BACKGROUND_LEGACY | VDC_CTRL_ENABLE_SPRITES_LEGACY;
         vdc.registers[0x05] = vdc.registers[0x04];
         vdc.last_control_value = vdc.registers[0x04];
+        vdc.render_control_latch = vdc.registers[0x04];
         vdc.registers[0x09] = 0x0010; // default to 64x32 virtual map
         vdc.registers[0x0A] = 0x0010;
         vdc.registers[0x0B] = 0x0010;
@@ -2278,7 +3321,9 @@ impl Vdc {
         self.scroll_line_y = [0; LINES_PER_FRAME as usize];
         self.zoom_line_x = [0; LINES_PER_FRAME as usize];
         self.zoom_line_y = [0; LINES_PER_FRAME as usize];
+        self.control_line = [0; LINES_PER_FRAME as usize];
         self.scroll_line_valid = [false; LINES_PER_FRAME as usize];
+        self.vram_dma_request = false;
         self.dcr_request = None;
         self.cram_pending = false;
         self.cram_dma_count = 0;
@@ -2286,6 +3331,7 @@ impl Vdc {
         self.registers[0x04] = VDC_CTRL_ENABLE_BACKGROUND_LEGACY | VDC_CTRL_ENABLE_SPRITES_LEGACY;
         self.registers[0x05] = self.registers[0x04];
         self.last_control_value = self.registers[0x04];
+        self.render_control_latch = self.registers[0x04];
         self.last_cram_source = 0;
         self.last_cram_length = 0;
         self.vram_dma_count = 0;
@@ -2299,6 +3345,15 @@ impl Vdc {
         self.r05_low_writes = 0;
         self.r05_high_writes = 0;
         self.last_r05_low = 0;
+        self.r05_low_value_counts = [0; 0x100];
+        self.r05_high_value_counts = [0; 0x100];
+        self.vram_data_low_writes = 0;
+        self.vram_data_high_writes = 0;
+        self.vram_data_high_without_low = 0;
+        self.vram_write_range_count = 0;
+        self.mawr_log.clear();
+        self.vram_write_log.clear();
+        self.vram_write_log_limit = 0;
         self.pending_write_register = None;
         self.registers[0x0A] = 0x0010;
         self.registers[0x0B] = 0x0010;
@@ -2352,6 +3407,26 @@ impl Vdc {
         self.last_r05_low
     }
 
+    fn r05_low_value_counts(&self) -> &[u64; 0x100] {
+        &self.r05_low_value_counts
+    }
+
+    fn r05_high_value_counts(&self) -> &[u64; 0x100] {
+        &self.r05_high_value_counts
+    }
+
+    fn vram_data_low_writes(&self) -> u64 {
+        self.vram_data_low_writes
+    }
+
+    fn vram_data_high_writes(&self) -> u64 {
+        self.vram_data_high_writes
+    }
+
+    fn vram_data_high_without_low(&self) -> u64 {
+        self.vram_data_high_without_low
+    }
+
     fn satb_pending(&self) -> bool {
         self.satb_pending
     }
@@ -2371,6 +3446,11 @@ impl Vdc {
 
     fn enabled_status_mask(&self) -> u8 {
         let ctrl = self.control();
+        let vbl_ctrl = if ctrl == 0 && (self.render_control_latch & 0x3000) != 0 {
+            self.render_control_latch
+        } else {
+            ctrl
+        };
         let mut mask = 0;
         if ctrl & 0x0001 != 0 {
             mask |= VDC_STATUS_CR;
@@ -2381,7 +3461,7 @@ impl Vdc {
         if ctrl & 0x0004 != 0 {
             mask |= VDC_STATUS_RCR;
         }
-        if ctrl & 0x0008 != 0 {
+        if vbl_ctrl & 0x0008 != 0 || vbl_ctrl & 0x1000 != 0 || vbl_ctrl & 0x2000 != 0 {
             mask |= VDC_STATUS_VBL;
         }
         mask
@@ -2402,6 +3482,109 @@ impl Vdc {
         self.registers[0x04]
     }
 
+    fn control_for_render(&self) -> u16 {
+        let current = self.control();
+        if current == 0 {
+            self.render_control_latch
+        } else {
+            current
+        }
+    }
+
+    fn vertical_window(&self) -> VerticalWindow {
+        let timing_programmed = self.registers[0x0D] != 0
+            || self.registers[0x0E] != 0
+            || (self.registers[0x0C] & 0xFF00) != 0;
+
+        if !timing_programmed {
+            return VerticalWindow {
+                timing_programmed: false,
+                active_start_line: 0,
+                active_line_count: VDC_VISIBLE_LINES as usize,
+                post_active_overscan_lines: 0,
+                vblank_start_line: VDC_VISIBLE_LINES as usize,
+            };
+        }
+
+        let lines_per_frame = LINES_PER_FRAME as usize;
+        let vpr = self.registers[0x0C];
+        let vsw = (vpr & 0x001F) as usize;
+        let vds = ((vpr >> 8) & 0x00FF) as usize;
+        let vdw = self.registers[0x0D];
+        let vcr = self.registers[0x0E];
+        let active_start_line = (vsw + vds) % lines_per_frame;
+        let active_line_count = ((vdw & 0x01FF) as usize)
+            .saturating_add(1)
+            .max(1)
+            .min(lines_per_frame);
+        let post_active_overscan_lines = 3usize.saturating_add((vcr & 0x00FF) as usize);
+        let vblank_start_line = active_start_line
+            .saturating_add(active_line_count)
+            .min(VDC_MAX_VBLANK_START_LINE)
+            .min(lines_per_frame.saturating_sub(1));
+
+        VerticalWindow {
+            timing_programmed: true,
+            active_start_line,
+            active_line_count,
+            post_active_overscan_lines,
+            vblank_start_line,
+        }
+    }
+
+    #[inline]
+    fn frame_line_for_output_row(&self, window: &VerticalWindow, row: usize) -> usize {
+        let lines_per_frame = LINES_PER_FRAME as usize;
+        if window.timing_programmed {
+            (window.active_start_line + row) % lines_per_frame
+        } else {
+            row % lines_per_frame
+        }
+    }
+
+    fn active_row_for_output_row(&self, row: usize) -> Option<usize> {
+        let window = self.vertical_window();
+        if !window.timing_programmed {
+            return (row < FRAME_HEIGHT).then_some(row);
+        }
+
+        let cycle_len = window
+            .active_start_line
+            .saturating_add(window.active_line_count)
+            .saturating_add(window.post_active_overscan_lines)
+            .max(1);
+        let cycle_pos = self.frame_line_for_output_row(&window, row) % cycle_len;
+        if cycle_pos < window.active_start_line {
+            return None;
+        }
+        let active_end = window.active_start_line + window.active_line_count;
+        if cycle_pos < active_end {
+            return Some(cycle_pos - window.active_start_line);
+        }
+        None
+    }
+
+    fn output_row_in_active_window(&self, row: usize) -> bool {
+        self.active_row_for_output_row(row).is_some()
+    }
+
+    fn vblank_start_scanline(&self) -> u16 {
+        self.vertical_window().vblank_start_line as u16
+    }
+
+    fn rcr_scanline_for_target(&self, target: u16) -> Option<u16> {
+        if ((VDC_ACTIVE_COUNTER_BASE as u16)..=0x0146).contains(&target) {
+            let window = self.vertical_window();
+            let relative = (target - VDC_ACTIVE_COUNTER_BASE as u16) as usize;
+            let line = (window.active_start_line + relative) % (LINES_PER_FRAME as usize);
+            Some(line as u16)
+        } else if target < LINES_PER_FRAME {
+            Some(target)
+        } else {
+            None
+        }
+    }
+
     fn tick(&mut self, phi_cycles: u32) -> bool {
         if phi_cycles == 0 {
             return false;
@@ -2416,6 +3599,13 @@ impl Vdc {
 
         let mut irq_recalc = false;
         while self.phi_scaled >= frame_cycles {
+            // Preserve per-frame line latches until the renderer consumes this frame.
+            // Some HuC6280 instructions run long enough to cover many scanlines; if
+            // we march past VBlank start in one call, line-state snapshots can be
+            // overwritten before render_frame_from_vram() runs.
+            if self.frame_trigger {
+                break;
+            }
             self.phi_scaled -= frame_cycles;
             let wrapped = self.advance_scanline();
             if wrapped {
@@ -2423,12 +3613,22 @@ impl Vdc {
             }
 
             let rcr_target = self.registers[0x06] & 0x03FF;
-            if self.scanline == rcr_target {
-                self.raise_status(VDC_STATUS_RCR);
-                irq_recalc = true;
+            if let Some(rcr_scanline) = self.rcr_scanline_for_target(rcr_target) {
+                if self.scanline == rcr_scanline {
+                    // Per HuC6270 hardware (confirmed by MAME): the RR status
+                    // flag is only raised when CR bit 2 (RCR interrupt enable)
+                    // is set.  Games like Kato-chan & Ken-chan rely on this —
+                    // the ISR checks the RR bit to decide whether to apply a
+                    // scroll offset, so raising it unconditionally would cause
+                    // an incorrect BYR value on the title screen.
+                    if self.control() & 0x0004 != 0 {
+                        self.raise_status(VDC_STATUS_RCR);
+                        irq_recalc = true;
+                    }
+                }
             }
 
-            if self.scanline == VDC_VISIBLE_LINES {
+            if self.scanline == self.vblank_start_scanline() {
                 self.in_vblank = true;
                 self.raise_status(VDC_STATUS_VBL);
                 self.refresh_activity_flags();
@@ -2437,6 +3637,7 @@ impl Vdc {
                     irq_recalc = true;
                 }
                 self.frame_trigger = true;
+                break;
             }
         }
 
@@ -2453,7 +3654,11 @@ impl Vdc {
 
     fn set_busy(&mut self, cycles: u32) {
         let divisor = Bus::env_vdc_busy_divisor().max(1);
-        let scaled = if divisor == 1 { cycles } else { cycles / divisor };
+        let scaled = if divisor == 1 {
+            cycles
+        } else {
+            cycles / divisor
+        };
         self.busy_cycles = self.busy_cycles.max(scaled);
         self.refresh_activity_flags();
     }
@@ -2480,7 +3685,7 @@ impl Vdc {
     fn write_port(&mut self, port: usize, value: u8) {
         match port {
             0 => self.write_select(value),
-            1 => self.write_data_port(value),
+            1 => self.write_data_low(value),
             2 => self.write_data_high_direct(value),
             _ => {}
         }
@@ -2489,7 +3694,7 @@ impl Vdc {
     fn read_port(&mut self, port: usize) -> u8 {
         match port {
             0 => self.read_status(),
-            1 => self.read_data_port(),
+            1 => self.read_data_low(),
             2 => self.read_data_high(),
             _ => 0,
         }
@@ -2519,39 +3724,15 @@ impl Vdc {
     }
 
     fn write_select(&mut self, value: u8) {
-        if self.st0_locked_until_commit && matches!(self.write_phase, VdcWritePhase::High) {
-            #[cfg(feature = "trace_hw_writes")]
-            eprintln!(
-                "  VDC select ignored while locked (pending={:?} phase={:?})",
-                self.pending_write_register, self.write_phase
-            );
-            return;
-        }
         let new_sel = value & 0x1F;
-        // Changing the selected register should invalidate any in-flight
-        // low-byte latch to avoid pairing a new selection with an old low byte.
-        // However, the BIOS often sprays zeros across the IO window; to avoid
-        // losing a just-written selector, keep it alive until either another
-        // ST0 write arrives or a data byte commits.
-        if self.pending_write_register.is_some() && self.pending_write_register != Some(new_sel) {
-            // keep latch; don't clear here
-        } else {
+        // Keep the low-byte target latched across ST0 writes until the paired
+        // high-byte commit completes.
+        if !self.st0_locked_until_commit {
             self.pending_write_register = None;
         }
         #[cfg(feature = "trace_hw_writes")]
         if new_sel == 0x05 {
             eprintln!("  TRACE select R05 (pc={:04X})", 0);
-        }
-        if self.map_register_index(new_sel) == self.map_register_index(self.selected) {
-            // Avoid clobbering an in-flight data write when the ROM spams the same ST0 value.
-            #[cfg(feature = "trace_hw_writes")]
-            eprintln!(
-                "  VDC select (dedup) {:02X} pending={:?} phase={:?}",
-                new_sel, self.pending_write_register, self.write_phase
-            );
-            self.write_phase = VdcWritePhase::Low;
-            self.ignore_next_high_byte = false;
-            return;
         }
         self.selected = new_sel;
         self.write_phase = VdcWritePhase::Low;
@@ -2571,9 +3752,15 @@ impl Vdc {
         self.latch_low = value;
         self.pending_write_register = Some(self.selected_register());
         self.st0_locked_until_commit = true;
+        if self.pending_write_register == Some(0x02) {
+            self.vram_data_low_writes = self.vram_data_low_writes.saturating_add(1);
+        }
         if matches!(self.selected_register(), 0x04 | 0x05) {
             self.r05_low_writes = self.r05_low_writes.saturating_add(1);
             self.last_r05_low = value;
+            if let Some(slot) = self.r05_low_value_counts.get_mut(value as usize) {
+                *slot = slot.saturating_add(1);
+            }
         }
         #[cfg(feature = "trace_hw_writes")]
         {
@@ -2593,23 +3780,20 @@ impl Vdc {
             self.write_phase
         );
         let index = self.selected_register() as usize;
-        if matches!(index, 0x0C) {
-            self.commit_register_write(index, value as u16);
-            self.write_phase = VdcWritePhase::High;
-            self.ignore_next_high_byte = true;
-            self.st0_locked_until_commit = false;
-            #[cfg(feature = "trace_hw_writes")]
-            {
-                self.st0_hold_counter = 0;
-            }
-        } else if index == 0x04 || index == 0x05 {
-            // CR writes often arrive as a single byte to flip display enables.
-            let existing = self.registers.get(index).copied().unwrap_or(0);
-            let combined = (existing & 0xFF00) | value as u16;
-            self.commit_register_write(index, combined);
+        if matches!(
+            index,
+            0x02 | 0x0A | 0x0B | 0x0C | 0x0F | 0x12 | 0x13 | 0x14
+        ) {
+            // HuC6270: these registers only commit on the high-byte write
+            // (ST2).  BXR/BYR are NOT included — MAME's COMBINE_DATA merges
+            // each byte into the register immediately.
             self.write_phase = VdcWritePhase::High;
             self.ignore_next_high_byte = false;
         } else {
+            // Other non-side-effecting registers commit on low-byte write.
+            let existing = self.registers.get(index).copied().unwrap_or(0);
+            let combined = (existing & 0xFF00) | value as u16;
+            self.commit_register_write(index, combined);
             self.write_phase = VdcWritePhase::High;
             self.ignore_next_high_byte = false;
         }
@@ -2633,7 +3817,7 @@ impl Vdc {
         let low = if use_latch {
             self.latch_low
         } else {
-            let index = (self.selected & 0x1F) as usize;
+            let index = self.selected_register() as usize;
             self.registers
                 .get(index)
                 .copied()
@@ -2642,6 +3826,12 @@ impl Vdc {
         };
         let combined = u16::from_le_bytes([low, value]);
         let index = self.pending_write_register.take().unwrap_or(target_reg) as usize;
+        if index == 0x02 {
+            self.vram_data_high_writes = self.vram_data_high_writes.saturating_add(1);
+            if !use_latch {
+                self.vram_data_high_without_low = self.vram_data_high_without_low.saturating_add(1);
+            }
+        }
         self.st0_locked_until_commit = false;
         #[cfg(feature = "trace_hw_writes")]
         {
@@ -2649,13 +3839,19 @@ impl Vdc {
         }
         if index == 0x04 || index == 0x05 {
             self.r05_high_writes = self.r05_high_writes.saturating_add(1);
+            if let Some(slot) = self.r05_high_value_counts.get_mut(value as usize) {
+                *slot = slot.saturating_add(1);
+            }
         }
         #[cfg(feature = "trace_hw_writes")]
         {
             if index == 0x04 || index == 0x05 {
                 eprintln!("  TRACE R05 high {:02X} commit {:04X}", value, combined);
             } else if matches!(index, 0x10 | 0x11 | 0x12) {
-                eprintln!("  TRACE DMA reg {:02X} high {:02X} commit {:04X}", index, value, combined);
+                eprintln!(
+                    "  TRACE DMA reg {:02X} high {:02X} commit {:04X}",
+                    index, value, combined
+                );
             }
             self.debug_log_select_and_value(index as u8, combined);
         }
@@ -2676,45 +3872,12 @@ impl Vdc {
         }
     }
 
-    fn write_data_port(&mut self, value: u8) {
-        // If the CPU streams data without setting the expected phase, treat the first byte
-        // as a low write to ensure the pair commits (helps BIOS 3-byte ST sequences).
-        if !matches!(self.write_phase, VdcWritePhase::Low | VdcWritePhase::High) {
-            self.write_phase = VdcWritePhase::Low;
-            self.ignore_next_high_byte = false;
-            self.pending_write_register = None;
-        }
-
-        match self.write_phase {
-            VdcWritePhase::Low => self.write_data_low(value),
-            VdcWritePhase::High => self.write_data_high(value),
-        }
-
-        #[cfg(feature = "trace_hw_writes")]
-        if value != 0 {
-            eprintln!(
-                "  VDC DATA non-zero write sel={:02X} phase={:?} val={:02X} addr={:04X}",
-                self.selected_register(),
-                self.write_phase,
-                value,
-                self.last_io_addr
-            );
-        }
-    }
-
     fn write_data_high_direct(&mut self, value: u8) {
         if !matches!(self.write_phase, VdcWritePhase::High) {
             self.write_phase = VdcWritePhase::High;
             self.ignore_next_high_byte = false;
         }
         self.write_data_high(value);
-    }
-
-    fn read_data_port(&mut self) -> u8 {
-        match self.read_phase {
-            VdcReadPhase::Low => self.read_data_low(),
-            VdcReadPhase::High => self.read_data_high(),
-        }
     }
 
     #[cfg(feature = "trace_hw_writes")]
@@ -2724,35 +3887,27 @@ impl Vdc {
         }
     }
 
-    fn handle_dcr_write(&mut self, value: u16) {
-        // DCR is an 8-bit register. Some BIOS code appears to poke it using
-        // only the high byte path; if the low byte is zero and the high byte
-        // is non-zero, treat that as the intended value.
+    fn take_dcr_request(&mut self) -> Option<u8> {
+        self.dcr_request.take()
+    }
+
+    fn take_vram_dma_request(&mut self) -> bool {
+        let pending = self.vram_dma_request;
+        self.vram_dma_request = false;
+        pending
+    }
+
+    fn request_dcr(&mut self, value: u16) {
+        // DCR command values are treated as 8-bit. If only the high byte is
+        // populated, use it as a compatibility path for legacy write shapes.
         let masked = if (value & 0x00FF) == 0 {
             (value >> 8) & 0x00FF
         } else {
             value & 0x00FF
         };
-        self.registers[0x0C] = masked;
         self.dcr_request = Some(masked as u8);
         self.dcr_write_count = self.dcr_write_count.saturating_add(1);
         self.last_dcr_value = masked as u8;
-        #[cfg(feature = "trace_hw_writes")]
-        eprintln!(
-            "  VDC DCR <= {:02X} (MAWR {:04X} MARR {:04X} DMA src {:04X} dst {:04X} len {:04X})",
-            masked,
-            self.mawr,
-            self.marr,
-            self.registers[0x10],
-            self.registers[0x11],
-            self.registers[0x12]
-        );
-        #[cfg(feature = "trace_hw_writes")]
-        eprintln!("  VDC DCR <= {:02X}", masked);
-    }
-
-    fn take_dcr_request(&mut self) -> Option<u8> {
-        self.dcr_request.take()
     }
 
     fn commit_register_write(&mut self, index: usize, combined: u16) {
@@ -2783,6 +3938,10 @@ impl Vdc {
             0x00 => {
                 self.mawr = combined & 0x7FFF;
                 self.registers[0x00] = self.mawr;
+                // MAWR log
+                if self.mawr >= self.mawr_log_start && self.mawr < self.mawr_log_end {
+                    self.mawr_log.push(self.mawr);
+                }
             }
             0x01 => {
                 self.marr = combined & 0x7FFF;
@@ -2797,6 +3956,9 @@ impl Vdc {
                 self.registers[0x05] = combined;
                 self.control_write_count = self.control_write_count.saturating_add(1);
                 self.last_control_value = combined;
+                if combined != 0 {
+                    self.render_control_latch = combined;
+                }
                 #[cfg(feature = "trace_hw_writes")]
                 eprintln!("  VDC control <= {:04X}", combined);
             }
@@ -2813,22 +3975,21 @@ impl Vdc {
                 self.scroll_y_dirty = true;
             }
             0x0A => {
-                let masked = combined & 0x001F;
-                self.registers[0x0A] = masked;
-                self.zoom_x_pending = masked;
-                self.zoom_x_dirty = true;
+                // HSR (Horizontal Sync Register) – timing only, not zoom.
+                self.registers[0x0A] = combined;
             }
             0x0B => {
-                let masked = combined & 0x001F;
-                self.registers[0x0B] = masked;
-                self.zoom_y_pending = masked;
-                self.zoom_y_dirty = true;
+                // HDR (Horizontal Display Register) – timing only, not zoom.
+                self.registers[0x0B] = combined;
             }
             0x0C => {
-                #[cfg(feature = "trace_hw_writes")]
-                eprintln!("  VDC write R0C = {:04X}", combined);
-                self.registers[0x0C] = combined;
-                self.handle_dcr_write(combined);
+                let lo = (combined & 0x00FF) as u8;
+                let hi = (combined >> 8) as u8;
+                if hi == 0 || lo == 0 {
+                    // Compatibility alias: some existing code paths treat R0C
+                    // as DCR when written as an 8-bit value.
+                    self.request_dcr(combined);
+                }
             }
             0x0F => self.write_dma_control(combined),
             0x10 => self.write_dma_source(combined),
@@ -2879,6 +4040,7 @@ impl Vdc {
 
     fn write_dma_length(&mut self, value: u16) {
         self.registers[0x12] = value;
+        self.vram_dma_request = true;
     }
 
     fn write_satb_source(&mut self, index: usize, value: u16) {
@@ -2936,6 +4098,23 @@ impl Vdc {
         if let Some(slot) = self.vram.get_mut(idx) {
             *slot = value;
         }
+        if (self.mawr & 0x7FFF) >= self.vram_write_range_start
+            && (self.mawr & 0x7FFF) < self.vram_write_range_end
+        {
+            self.vram_write_range_count = self.vram_write_range_count.saturating_add(1);
+        }
+        // Debug write log
+        if self.vram_write_log.len() < self.vram_write_log_limit {
+            self.vram_write_log.push((self.mawr & 0x7FFF, value));
+        }
+        // Mark BIOS font as dirty if the write hits the font tile VRAM area
+        // (tiles 0x120-0x17F = VRAM words 0x1200-0x17FF).
+        if !self.bios_font_dirty && !self.bios_font_tiles.is_empty() {
+            let addr = idx as u16;
+            if addr >= 0x1200 && addr < 0x1800 {
+                self.bios_font_dirty = true;
+            }
+        }
         #[cfg(feature = "trace_hw_writes")]
         eprintln!("    VRAM[{:04X}] = {:04X}", self.mawr & 0x7FFF, value);
         self.set_busy(VDC_BUSY_ACCESS_CYCLES);
@@ -2954,6 +4133,11 @@ impl Vdc {
     }
 
     fn read_data_low(&mut self) -> u8 {
+        let reg = self.selected_register() as usize;
+        if reg != 0x02 {
+            self.read_phase = VdcReadPhase::High;
+            return (self.registers.get(reg).copied().unwrap_or(0) & 0x00FF) as u8;
+        }
         if self.read_phase == VdcReadPhase::Low {
             self.prefetch_read();
         }
@@ -2962,6 +4146,11 @@ impl Vdc {
     }
 
     fn read_data_high(&mut self) -> u8 {
+        let reg = self.selected_register() as usize;
+        if reg != 0x02 {
+            self.read_phase = VdcReadPhase::Low;
+            return (self.registers.get(reg).copied().unwrap_or(0) >> 8) as u8;
+        }
         if self.read_phase == VdcReadPhase::Low {
             self.prefetch_read();
         }
@@ -2984,12 +4173,11 @@ impl Vdc {
     }
 
     fn increment_step(&self) -> u16 {
-        match (self.control() >> 11) & 0b11 {
+        match (self.control() >> 11) & 0x03 {
             0 => 1,
             1 => 32,
             2 => 64,
-            3 => 128,
-            _ => 1,
+            _ => 128,
         }
     }
 
@@ -2999,6 +4187,7 @@ impl Vdc {
         let width_tiles = match width_code {
             0 => 32,
             1 => 64,
+            2 => 128,
             _ => 128,
         };
         let height_tiles = if (mwr >> 6) & 0x01 == 0 { 32 } else { 64 };
@@ -3006,9 +4195,7 @@ impl Vdc {
     }
 
     fn map_base_address(&self) -> usize {
-        let mwr = self.registers[0x09];
-        let base_index = ((mwr >> 8) & 0x0F) as usize;
-        (base_index << 10) & 0x7FFF
+        0
     }
 
     fn map_entry_address(&self, tile_row: usize, tile_col: usize) -> usize {
@@ -3017,19 +4204,22 @@ impl Vdc {
         let height = map_height.max(1);
         let row = tile_row % height;
         let col = tile_col % width;
-        let block_cols = (width + 31) / 32;
-        let block_row = row / 32;
-        let block_col = col / 32;
-        let block_index = block_row * block_cols + block_col;
-        let block_base = (self.map_base_address() + block_index * 0x400) & 0x7FFF;
-        let local_row = row % 32;
-        let local_col = col % 32;
-        (block_base + local_row * 32 + local_col) & 0x7FFF
+        // HuC6270 BAT uses flat row-major addressing (matching MAME/Mednafen):
+        //   address = bat_y * map_width + bat_x
+        // The MWR register determines the map dimensions.
+        (self.map_base_address() + row * width + col) & 0x7FFF
     }
 
     #[cfg(test)]
     fn map_entry_address_for_test(&self, tile_row: usize, tile_col: usize) -> usize {
         self.map_entry_address(tile_row, tile_col)
+    }
+
+    #[cfg(test)]
+    fn set_zoom_for_test(&mut self, zoom_x: u16, zoom_y: u16) {
+        self.zoom_x = zoom_x & 0x001F;
+        self.zoom_y = zoom_y & 0x001F;
+        self.scroll_line_valid.fill(false);
     }
 
     fn apply_pending_scroll(&mut self) {
@@ -3062,6 +4252,7 @@ impl Vdc {
         self.scroll_line_y[idx] = self.scroll_y;
         self.zoom_line_x[idx] = self.zoom_x;
         self.zoom_line_y[idx] = self.zoom_y;
+        self.control_line[idx] = self.control_for_render();
         self.scroll_line_valid[idx] = true;
     }
 
@@ -3078,6 +4269,7 @@ impl Vdc {
             self.scroll_line_y[line] = self.scroll_y;
             self.zoom_line_x[line] = self.zoom_x;
             self.zoom_line_y[line] = self.zoom_y;
+            self.control_line[line] = self.control_for_render();
             self.scroll_line_valid[line] = true;
         }
     }
@@ -3101,6 +4293,20 @@ impl Vdc {
         } else {
             (self.zoom_x, self.zoom_y)
         }
+    }
+
+    fn control_values_for_line(&mut self, line: usize) -> u16 {
+        self.ensure_line_state(line);
+        if line < self.control_line.len() {
+            self.control_line[line]
+        } else {
+            self.control_for_render()
+        }
+    }
+
+    fn line_state_index_for_frame_row(&self, row: usize) -> usize {
+        let window = self.vertical_window();
+        self.frame_line_for_output_row(&window, row)
     }
 
     fn advance_scanline(&mut self) -> bool {
@@ -3132,6 +4338,34 @@ impl Vdc {
         self.apply_pending_scroll();
         (self.scroll_x as usize, self.scroll_y as usize)
     }
+
+    fn scroll_line(&self, line: usize) -> (u16, u16) {
+        if line < self.scroll_line_x.len() {
+            (self.scroll_line_x[line], self.scroll_line_y[line])
+        } else {
+            (self.scroll_x, self.scroll_y)
+        }
+    }
+
+    fn zoom_line(&self, line: usize) -> (u16, u16) {
+        if line < self.zoom_line_x.len() {
+            (self.zoom_line_x[line], self.zoom_line_y[line])
+        } else {
+            (self.zoom_x, self.zoom_y)
+        }
+    }
+
+    fn control_line(&self, line: usize) -> u16 {
+        if line < self.control_line.len() {
+            self.control_line[line]
+        } else {
+            self.control_for_render()
+        }
+    }
+
+    fn scroll_line_valid(&self, line: usize) -> bool {
+        self.scroll_line_valid.get(line).copied().unwrap_or(false)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -3149,26 +4383,71 @@ enum VdcReadPhase {
 const PSG_REG_COUNT: usize = 32;
 const PSG_CHANNEL_COUNT: usize = 6;
 const PSG_WAVE_SIZE: usize = 32;
+const PSG_REG_CH_SELECT: usize = 0x00;
+const PSG_REG_MAIN_BALANCE: usize = 0x01;
+const PSG_REG_FREQ_LO: usize = 0x02;
+const PSG_REG_FREQ_HI: usize = 0x03;
+const PSG_REG_CH_CONTROL: usize = 0x04;
+const PSG_REG_CH_BALANCE: usize = 0x05;
+const PSG_REG_WAVE_DATA: usize = 0x06;
+const PSG_REG_NOISE_CTRL: usize = 0x07;
+const PSG_REG_LFO_FREQ: usize = 0x08;
+const PSG_REG_LFO_CTRL: usize = 0x09;
 const PSG_REG_TIMER_LO: usize = 0x18;
 const PSG_REG_TIMER_HI: usize = 0x19;
 const PSG_REG_TIMER_CTRL: usize = 0x1A;
 const PSG_CTRL_ENABLE: u8 = 0x01;
 const PSG_CTRL_IRQ_ENABLE: u8 = 0x02;
 const PSG_STATUS_IRQ: u8 = 0x80;
+const PSG_CH_CTRL_VOLUME_MASK: u8 = 0x1F;
+const PSG_CH_CTRL_DDA: u8 = 0x40;
+const PSG_CH_CTRL_KEY_ON: u8 = 0x80;
+const PSG_NOISE_ENABLE: u8 = 0x80;
+const PSG_NOISE_FREQ_MASK: u8 = 0x1F;
+const PSG_PHASE_FRAC_BITS: u32 = 12;
+const PSG_PHASE_FRAC_MASK: u32 = (1 << PSG_PHASE_FRAC_BITS) - 1;
+const PSG_OUTPUT_GAIN: i32 = 256;
+const PSG_LEVEL_NORMALIZER: i32 = 31 * 15 * 15;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct PsgChannel {
     frequency: u16,
-    waveform_index: u8,
-    volume: u8,
+    control: u8,
+    balance: u8,
+    noise_control: u8,
     phase: u32,
     wave_pos: u8,
+    wave_write_pos: u8,
+    dda_sample: u8,
+    noise_lfsr: u16,
+    noise_phase: u32,
+}
+
+impl Default for PsgChannel {
+    fn default() -> Self {
+        Self {
+            frequency: 0,
+            control: 0,
+            balance: 0xFF,
+            noise_control: 0,
+            phase: 0,
+            wave_pos: 0,
+            wave_write_pos: 0,
+            dda_sample: 0x10,
+            noise_lfsr: 0x4000,
+            noise_phase: 0,
+        }
+    }
 }
 
 #[derive(Clone)]
 struct Psg {
     regs: [u8; PSG_REG_COUNT],
     select: u8,
+    current_channel: usize,
+    main_balance: u8,
+    lfo_frequency: u8,
+    lfo_control: u8,
     accumulator: u32,
     irq_pending: bool,
     channels: [PsgChannel; PSG_CHANNEL_COUNT],
@@ -3180,6 +4459,10 @@ impl Psg {
         Self {
             regs: [0; PSG_REG_COUNT],
             select: 0,
+            current_channel: 0,
+            main_balance: 0xFF,
+            lfo_frequency: 0,
+            lfo_control: 0,
             accumulator: 0,
             irq_pending: false,
             channels: [PsgChannel::default(); PSG_CHANNEL_COUNT],
@@ -3199,13 +4482,7 @@ impl Psg {
         let index = self.select as usize;
         if index < PSG_REG_COUNT {
             self.regs[index] = value;
-            if index == PSG_REG_TIMER_LO || index == PSG_REG_TIMER_HI {
-                self.accumulator = 0;
-            }
-            if index == PSG_REG_TIMER_CTRL && value & PSG_CTRL_ENABLE == 0 {
-                self.irq_pending = false;
-            }
-            self.update_channel_state(index, value);
+            self.write_register(index, value);
         }
         if index >= PSG_REG_COUNT {
             self.write_wave_ram(index - PSG_REG_COUNT, value);
@@ -3237,6 +4514,84 @@ impl Psg {
         status
     }
 
+    fn write_register(&mut self, index: usize, value: u8) {
+        match index {
+            PSG_REG_CH_SELECT => {
+                self.current_channel = (value as usize) & 0x07;
+                if self.current_channel >= PSG_CHANNEL_COUNT {
+                    self.current_channel = PSG_CHANNEL_COUNT - 1;
+                }
+            }
+            PSG_REG_MAIN_BALANCE => {
+                self.main_balance = value;
+            }
+            PSG_REG_FREQ_LO => {
+                let ch = self.current_channel;
+                let channel = &mut self.channels[ch];
+                channel.frequency = (channel.frequency & 0x0F00) | value as u16;
+            }
+            PSG_REG_FREQ_HI => {
+                let ch = self.current_channel;
+                let channel = &mut self.channels[ch];
+                channel.frequency = (channel.frequency & 0x00FF) | (((value & 0x0F) as u16) << 8);
+            }
+            PSG_REG_CH_CONTROL => {
+                let ch = self.current_channel;
+                let channel = &mut self.channels[ch];
+                let previous = channel.control;
+                channel.control = value;
+                if previous & PSG_CH_CTRL_DDA != 0 && value & PSG_CH_CTRL_DDA == 0 {
+                    // Hardware resets the waveform index when DDA is cleared.
+                    channel.wave_write_pos = 0;
+                    channel.wave_pos = 0;
+                }
+                if previous & PSG_CH_CTRL_KEY_ON == 0 && value & PSG_CH_CTRL_KEY_ON != 0 {
+                    channel.phase = 0;
+                    channel.wave_pos = channel.wave_write_pos;
+                    channel.noise_phase = 0;
+                    channel.noise_lfsr = 0x4000;
+                }
+            }
+            PSG_REG_CH_BALANCE => {
+                self.channels[self.current_channel].balance = value;
+            }
+            PSG_REG_WAVE_DATA => {
+                let ch = self.current_channel;
+                let channel = &mut self.channels[ch];
+                let sample = value & 0x1F;
+                if channel.control & PSG_CH_CTRL_DDA != 0 {
+                    channel.dda_sample = sample;
+                } else if channel.control & PSG_CH_CTRL_KEY_ON == 0 {
+                    // Wave RAM writes are accepted only while channel enable and DDA are clear.
+                    let write_pos = channel.wave_write_pos as usize & (PSG_WAVE_SIZE - 1);
+                    let index = ch * PSG_WAVE_SIZE + write_pos;
+                    self.waveform_ram[index] = sample;
+                    channel.wave_write_pos = channel.wave_write_pos.wrapping_add(1) & 0x1F;
+                }
+            }
+            PSG_REG_NOISE_CTRL => {
+                if self.current_channel >= 4 {
+                    self.channels[self.current_channel].noise_control = value;
+                }
+            }
+            PSG_REG_LFO_FREQ => {
+                self.lfo_frequency = value;
+            }
+            PSG_REG_LFO_CTRL => {
+                self.lfo_control = value;
+            }
+            PSG_REG_TIMER_LO | PSG_REG_TIMER_HI => {
+                self.accumulator = 0;
+            }
+            PSG_REG_TIMER_CTRL => {
+                if value & PSG_CTRL_ENABLE == 0 {
+                    self.irq_pending = false;
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn timer_period(&self) -> u16 {
         let lo = self.regs[PSG_REG_TIMER_LO] as u16;
         let hi = self.regs[PSG_REG_TIMER_HI] as u16;
@@ -3246,33 +4601,6 @@ impl Psg {
     fn enabled(&self) -> bool {
         let ctrl = self.regs[PSG_REG_TIMER_CTRL];
         self.timer_period() != 0 && (ctrl & PSG_CTRL_ENABLE != 0)
-    }
-
-    fn update_channel_state(&mut self, index: usize, value: u8) {
-        let channel = index >> 2;
-        if channel >= PSG_CHANNEL_COUNT {
-            return;
-        }
-        let reg_in_channel = index & 0x03;
-        let ch = &mut self.channels[channel];
-        match reg_in_channel {
-            0x00 => {
-                ch.frequency = (ch.frequency & 0x0F00) | value as u16;
-                ch.phase = 0;
-            }
-            0x01 => {
-                ch.frequency = (ch.frequency & 0x00FF) | (((value & 0x0F) as u16) << 8);
-                ch.phase = 0;
-            }
-            0x02 => {
-                ch.waveform_index = value & 0x1F;
-                ch.wave_pos = ch.waveform_index;
-            }
-            0x03 => {
-                ch.volume = value & 0x1F;
-            }
-            _ => {}
-        }
     }
 
     fn tick(&mut self, cycles: u32) -> bool {
@@ -3305,36 +4633,113 @@ impl Psg {
     fn generate_sample(&mut self) -> i16 {
         self.advance_waveforms();
         let mut mix: i32 = 0;
-        for (channel, state) in self.channels.iter().enumerate() {
-            mix += self.sample_channel(channel, state) as i32;
+        for channel_index in 0..PSG_CHANNEL_COUNT {
+            let state = self.channels[channel_index];
+            mix += self.sample_channel(channel_index, state);
         }
-        (mix / PSG_CHANNEL_COUNT as i32) as i16
+        let scaled = (mix * PSG_OUTPUT_GAIN) / PSG_LEVEL_NORMALIZER.max(1);
+        scaled.clamp(i16::MIN as i32, i16::MAX as i32) as i16
     }
 
     fn advance_waveforms(&mut self) {
-        for ch in &mut self.channels {
-            if ch.frequency == 0 {
+        let lfo_mod = self.lfo_modulation();
+        let lfo_enabled = self.lfo_enabled();
+        for idx in 0..PSG_CHANNEL_COUNT {
+            let ch = &mut self.channels[idx];
+            if ch.control & PSG_CH_CTRL_KEY_ON == 0 {
                 continue;
             }
-            let phase = ch.phase.wrapping_add(ch.frequency as u32);
-            let step = (phase >> 12) as u8;
-            ch.phase = phase & 0x0FFF;
+            if ch.control & PSG_CH_CTRL_DDA != 0 {
+                continue;
+            }
+            if idx >= 4 && ch.noise_control & PSG_NOISE_ENABLE != 0 {
+                let noise_rate = (32u32 - (ch.noise_control & PSG_NOISE_FREQ_MASK) as u32).max(1);
+                ch.noise_phase = ch.noise_phase.saturating_add(noise_rate << 2);
+                let steps = (ch.noise_phase >> 8) as usize;
+                ch.noise_phase &= 0xFF;
+                for _ in 0..steps.max(1) {
+                    let feedback = ((ch.noise_lfsr >> 0) ^ (ch.noise_lfsr >> 1)) & 0x01;
+                    ch.noise_lfsr = (ch.noise_lfsr >> 1) | (feedback << 14);
+                    if ch.noise_lfsr == 0 {
+                        ch.noise_lfsr = 0x4000;
+                    }
+                }
+                continue;
+            }
+
+            let mut effective_period = ch.frequency as i32;
+            if idx == 0 && lfo_enabled {
+                effective_period = (effective_period + lfo_mod).clamp(0, 0x0FFF);
+            }
+            // HuC6280 PSG uses a divider. 0x001 is the highest pitch and 0x000 the lowest.
+            let divider = if effective_period <= 0 {
+                0x1000_u32
+            } else {
+                effective_period as u32
+            };
+            let step_fp = (((PSG_CLOCK_HZ as u64) << PSG_PHASE_FRAC_BITS)
+                / (divider as u64 * AUDIO_SAMPLE_RATE as u64))
+                .max(1);
+            let phase = ch.phase.wrapping_add(step_fp as u32);
+            let step = (phase >> PSG_PHASE_FRAC_BITS) as u8;
+            ch.phase = phase & PSG_PHASE_FRAC_MASK;
             if step != 0 {
-                ch.wave_pos = (ch.wave_pos.wrapping_add(step)) & (PSG_WAVE_SIZE as u8 - 1);
+                ch.wave_pos = ch.wave_pos.wrapping_add(step) & (PSG_WAVE_SIZE as u8 - 1);
             }
         }
     }
 
-    fn sample_channel(&self, channel: usize, state: &PsgChannel) -> i16 {
-        if state.frequency == 0 {
+    fn sample_channel(&self, channel: usize, state: PsgChannel) -> i32 {
+        if state.control & PSG_CH_CTRL_KEY_ON == 0 {
             return 0;
         }
-        let base = channel * PSG_WAVE_SIZE;
-        let offset = ((state.waveform_index as usize + state.wave_pos as usize)
-            & (PSG_WAVE_SIZE - 1)) as usize;
-        let wave_index = base + offset;
-        let raw = self.waveform_ram[wave_index] as i16 - 0x10;
-        raw * state.volume as i16
+        let raw = if state.control & PSG_CH_CTRL_DDA != 0 {
+            state.dda_sample as i32 - 0x10
+        } else if channel >= 4 && state.noise_control & PSG_NOISE_ENABLE != 0 {
+            if state.noise_lfsr & 0x01 == 0 {
+                0x0F
+            } else {
+                -0x10
+            }
+        } else {
+            let base = channel * PSG_WAVE_SIZE;
+            let offset = (state.wave_pos as usize) & (PSG_WAVE_SIZE - 1);
+            let wave_index = base + offset;
+            self.waveform_ram[wave_index] as i32 - 0x10
+        };
+        if raw == 0 {
+            return 0;
+        }
+
+        let volume = (state.control & PSG_CH_CTRL_VOLUME_MASK) as i32;
+        if volume == 0 {
+            return 0;
+        }
+
+        let ch_left = ((state.balance >> 4) & 0x0F) as i32;
+        let ch_right = (state.balance & 0x0F) as i32;
+        let master_left = ((self.main_balance >> 4) & 0x0F) as i32;
+        let master_right = (self.main_balance & 0x0F) as i32;
+        let left = raw * volume * ch_left * master_left;
+        let right = raw * volume * ch_right * master_right;
+        (left + right) / 2
+    }
+
+    fn lfo_enabled(&self) -> bool {
+        self.lfo_control & 0x80 != 0
+    }
+
+    fn lfo_modulation(&self) -> i32 {
+        if !self.lfo_enabled() {
+            return 0;
+        }
+        let depth_shift = (self.lfo_control & 0x03) as i32;
+        let speed_bias = (self.lfo_frequency & 0x0F) as i32;
+        let ch1 = self.channels[1];
+        let base = PSG_WAVE_SIZE;
+        let offset = (ch1.wave_pos as usize) & (PSG_WAVE_SIZE - 1);
+        let raw = self.waveform_ram[base + offset] as i32 - 0x10;
+        (raw << depth_shift) + speed_bias
     }
 
     fn write_wave_ram(&mut self, addr: usize, value: u8) {
@@ -3347,10 +4752,11 @@ impl Psg {
 struct Vce {
     palette: [u16; 0x200],
     control: u16,
+    address: u16,
     data_latch: u16,
     write_phase: VcePhase,
     read_phase: VcePhase,
-    brightness: u8,
+    data_high_without_low: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3364,24 +4770,26 @@ impl Vce {
         Self {
             palette: [0; 0x200],
             control: 0,
+            address: 0,
             data_latch: 0,
             write_phase: VcePhase::Low,
             read_phase: VcePhase::Low,
-            brightness: 0x0F,
+            data_high_without_low: 0,
         }
     }
 
     fn reset(&mut self) {
         self.palette.fill(0);
         self.control = 0;
+        self.address = 0;
         self.data_latch = 0;
         self.write_phase = VcePhase::Low;
         self.read_phase = VcePhase::Low;
-        self.brightness = 0x0F;
+        self.data_high_without_low = 0;
     }
 
     fn index(&self) -> usize {
-        (self.control as usize) & 0x01FF
+        (self.address as usize) & 0x01FF
     }
 
     fn write_control_low(&mut self, value: u8) {
@@ -3396,12 +4804,8 @@ impl Vce {
         self.control = ((value as u16) << 8) | (self.control & 0x00FF);
         self.read_phase = VcePhase::Low;
         self.write_phase = VcePhase::Low;
-        self.brightness = (value >> 4) & 0x0F;
         #[cfg(feature = "trace_hw_writes")]
-        eprintln!(
-            "  VCE control high <= {:02X} (brightness {:X})",
-            value, self.brightness
-        );
+        eprintln!("  VCE control high <= {:02X}", value);
     }
 
     fn read_control_low(&self) -> u8 {
@@ -3412,19 +4816,33 @@ impl Vce {
         (self.control >> 8) as u8
     }
 
+    fn write_address_low(&mut self, value: u8) {
+        self.address = (self.address & 0x0100) | value as u16;
+        self.read_phase = VcePhase::Low;
+        self.write_phase = VcePhase::Low;
+        #[cfg(feature = "trace_hw_writes")]
+        eprintln!("  VCE address low <= {:02X}", value);
+    }
+
+    fn write_address_high(&mut self, value: u8) {
+        self.address = (self.address & 0x00FF) | (((value as u16) & 0x01) << 8);
+        self.read_phase = VcePhase::Low;
+        self.write_phase = VcePhase::Low;
+        #[cfg(feature = "trace_hw_writes")]
+        eprintln!("  VCE address high <= {:02X}", value);
+    }
+
+    fn read_address_low(&self) -> u8 {
+        (self.address & 0x00FF) as u8
+    }
+
+    fn read_address_high(&self) -> u8 {
+        ((self.address >> 8) & 0x01) as u8
+    }
+
     fn write_data_low(&mut self, value: u8) {
         self.data_latch = (self.data_latch & 0xFF00) | value as u16;
         self.write_phase = VcePhase::High;
-        if cfg!(debug_assertions) {
-            use std::sync::atomic::{AtomicUsize, Ordering};
-            static LOGGED: AtomicUsize = AtomicUsize::new(0);
-            let n = LOGGED.fetch_add(1, Ordering::Relaxed);
-            if value != 0 || n < 64 {
-                if n < 64 {
-                    eprintln!("  VCE data low <= {:02X}", value);
-                }
-            }
-        }
         #[cfg(feature = "trace_hw_writes")]
         eprintln!("  VCE data low <= {:02X}", value);
     }
@@ -3433,6 +4851,7 @@ impl Vce {
         if self.write_phase != VcePhase::High {
             // 想定外の順序（high が先）で来たときは low とみなしてラッチし、
             // 次のバイトを high として待つ。これで low が常に 0 になる症状を回避する。
+            self.data_high_without_low = self.data_high_without_low.saturating_add(1);
             self.data_latch = (self.data_latch & 0xFF00) | value as u16;
             self.write_phase = VcePhase::High;
             return;
@@ -3441,19 +4860,6 @@ impl Vce {
         let idx = self.index();
         if let Some(slot) = self.palette.get_mut(idx) {
             *slot = self.data_latch;
-        }
-        if cfg!(debug_assertions) {
-            use std::sync::atomic::{AtomicUsize, Ordering};
-            static LOGGED: AtomicUsize = AtomicUsize::new(0);
-            let n = LOGGED.fetch_add(1, Ordering::Relaxed);
-            if self.data_latch != 0 || n < 256 {
-                if n < 256 {
-                    eprintln!(
-                        "  VCE palette write idx {:03X} = {:04X}",
-                        idx, self.data_latch
-                    );
-                }
-            }
         }
         #[cfg(feature = "trace_hw_writes")]
         eprintln!("  VCE palette[{idx:03X}] = {:04X}", self.data_latch);
@@ -3481,7 +4887,7 @@ impl Vce {
 
     fn increment_index(&mut self) {
         let next = (self.index() + 1) & 0x01FF;
-        self.control = (self.control & !0x01FF) | (next as u16);
+        self.address = (next as u16) & 0x01FF;
     }
 
     #[inline]
@@ -3496,26 +4902,26 @@ impl Vce {
         })
     }
 
-    #[cfg(test)]
     fn palette_word(&self, index: usize) -> u16 {
         self.palette.get(index).copied().unwrap_or(0)
     }
 
     fn palette_rgb(&self, index: usize) -> u32 {
         let raw = self.palette.get(index).copied().unwrap_or(0);
-        let blue = (raw & 0x000F) as u8;
-        let green = ((raw >> 4) & 0x000F) as u8;
-        let red = ((raw >> 8) & 0x000F) as u8;
+        // HuC6260 palette words are 9-bit RGB (3 bits/channel).
+        let blue = (raw & 0x0007) as u8;
+        let red = ((raw >> 3) & 0x0007) as u8;
+        let green = ((raw >> 6) & 0x0007) as u8;
 
         let scale = Self::brightness_override()
             .map(|v| v as u16)
-            .unwrap_or(self.brightness as u16);
+            .unwrap_or(0x07);
         let component = |value: u8| -> u8 {
             if scale == 0 {
                 return 0;
             }
-            let expanded = (value as u16 * 255) / 0x0F;
-            let scaled = (expanded * scale) / 0x0F;
+            let expanded = (value as u16 * 255) / 0x07;
+            let scaled = (expanded * scale) / 0x07;
             scaled.min(255) as u8
         };
 
@@ -3523,6 +4929,10 @@ impl Vce {
         let g = component(green);
         let b = component(blue);
         ((r as u32) << 16) | ((g as u32) << 8) | b as u32
+    }
+
+    fn data_high_without_low(&self) -> u64 {
+        self.data_high_without_low
     }
 }
 
@@ -3603,9 +5013,9 @@ impl IoPort {
 
     fn read(&self, offset: usize) -> Option<u8> {
         match offset & 0x03FF {
-            0x0000 => Some(self.output),
+            0x0000 => Some(self.read_joypad_data()),
             0x0002 => Some(self.direction),
-            0x0004 => Some(self.latched_input()),
+            0x0004 => Some(self.input),
             0x0005 => Some(self.enable),
             0x0006 => Some(self.select),
             _ => None,
@@ -3616,6 +5026,10 @@ impl IoPort {
         match offset & 0x03FF {
             0x0000 => {
                 self.output = value;
+                // CLR low resets the 6-pad scan index on hardware.
+                if value & 0x02 == 0 {
+                    self.select = 0;
+                }
                 true
             }
             0x0002 => {
@@ -3638,8 +5052,16 @@ impl IoPort {
         }
     }
 
-    fn latched_input(&self) -> u8 {
-        (self.input & !self.direction) | (self.output & self.direction)
+    fn read_joypad_data(&self) -> u8 {
+        // PC Engine joypad reads one nibble at a time.
+        // SEL=0 -> button nibble, SEL=1 -> d-pad nibble.
+        let sel = (self.output & 0x01) != 0;
+        let nibble = if sel {
+            (self.input >> 4) & 0x0F
+        } else {
+            self.input & 0x0F
+        };
+        0xF0 | nibble
     }
 }
 
@@ -3647,16 +5069,15 @@ impl IoPort {
 mod tests {
     use super::*;
 
-    // NOTE: 実機では A2=1 がデータ、A2=0 がアドレス（制御）とされる資料もある。
-    // ここでは制御=0x0400/01、データ=0x0402/03 とするが、切替検証しやすいようにまとめておく。
-    const VCE_CONTROL_ADDR: u16 = 0x0400;
-    const VCE_CONTROL_HIGH_ADDR: u16 = 0x0401;
-    const VCE_DATA_ADDR: u16 = 0x0402;
-    const VCE_DATA_HIGH_ADDR: u16 = 0x0403;
+    const VCE_ADDRESS_ADDR: u16 = 0x0402;
+    const VCE_ADDRESS_HIGH_ADDR: u16 = 0x0403;
+    const VCE_DATA_ADDR: u16 = 0x0404;
+    const VCE_DATA_HIGH_ADDR: u16 = 0x0405;
     const PSG_ADDR_REG: u16 = 0x0800;
     const PSG_WRITE_REG: u16 = 0x0801;
     const PSG_READ_REG: u16 = 0x0802;
     const PSG_STATUS_REG: u16 = 0x0803;
+    const TIMER_STD_BASE: u16 = 0x0C00;
     const JOYPAD_BASE_ADDR: u16 = 0x1000;
     const IRQ_TIMER_BASE: u16 = 0x1400;
     const CPU_IRQ_MASK: u16 = 0xFF12;
@@ -3698,13 +5119,11 @@ mod tests {
         bus
     }
 
-    fn render_zoom_pair(port: u8, zoom_value: u8) -> ([u32; FRAME_WIDTH], [u32; FRAME_WIDTH]) {
+    fn render_zoom_pair(zoom_x: u16) -> ([u32; FRAME_WIDTH], [u32; FRAME_WIDTH]) {
         let mut baseline = prepare_bus_for_zoom();
         baseline.render_frame_from_vram();
         let mut zoomed = prepare_bus_for_zoom();
-        zoomed.write_st_port(0, port);
-        zoomed.write_st_port(1, zoom_value);
-        zoomed.write_st_port(2, 0x00);
+        zoomed.vdc.set_zoom_for_test(zoom_x, 0x0010);
         zoomed.render_frame_from_vram();
 
         let mut base_line = [0u32; FRAME_WIDTH];
@@ -3743,13 +5162,11 @@ mod tests {
         bus
     }
 
-    fn render_vertical_zoom_pair(port: u8, zoom_value: u8) -> (Vec<u32>, Vec<u32>) {
+    fn render_vertical_zoom_pair(zoom_y: u16) -> (Vec<u32>, Vec<u32>) {
         let mut baseline = prepare_bus_for_vertical_zoom();
         baseline.render_frame_from_vram();
         let mut zoomed = prepare_bus_for_vertical_zoom();
-        zoomed.write_st_port(0, port);
-        zoomed.write_st_port(1, zoom_value);
-        zoomed.write_st_port(2, 0x00);
+        zoomed.vdc.set_zoom_for_test(0x0010, zoom_y);
         zoomed.render_frame_from_vram();
         (baseline.framebuffer.clone(), zoomed.framebuffer.clone())
     }
@@ -3789,14 +5206,18 @@ mod tests {
     }
 
     #[test]
-    fn io_port_direction_masks_input() {
+    fn io_port_reads_selected_joypad_nibble() {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
         bus.set_joypad_input(0x5A);
-        bus.write(JOYPAD_BASE_ADDR + 0x02, 0x0F);
-        bus.write(JOYPAD_BASE_ADDR, 0xA5);
-        let latched = bus.read(JOYPAD_BASE_ADDR + 0x04);
-        assert_eq!(latched, (0x5A & 0xF0) | (0xA5 & 0x0F));
+
+        // SEL=1 -> upper nibble
+        bus.write(JOYPAD_BASE_ADDR, 0x01);
+        assert_eq!(bus.read(JOYPAD_BASE_ADDR) & 0x0F, 0x05);
+
+        // SEL=0 -> lower nibble
+        bus.write(JOYPAD_BASE_ADDR, 0x00);
+        assert_eq!(bus.read(JOYPAD_BASE_ADDR) & 0x0F, 0x0A);
     }
 
     #[test]
@@ -3842,6 +5263,42 @@ mod tests {
 
         bus.write(0xFF13, IRQ_REQUEST_TIMER);
         assert_eq!(bus.read(0xFF13) & IRQ_REQUEST_TIMER, 0);
+    }
+
+    #[test]
+    fn timer_accessible_via_standard_io_offset() {
+        let mut bus = Bus::new();
+        bus.set_mpr(0, 0xFF);
+
+        bus.write(TIMER_STD_BASE, 0x02);
+        bus.write(TIMER_STD_BASE + 1, TIMER_CONTROL_START);
+
+        let fired = bus.tick(1024u32 * 3, true);
+        assert!(fired);
+        assert_eq!(
+            bus.read(CPU_IRQ_STATUS) & IRQ_REQUEST_TIMER,
+            IRQ_REQUEST_TIMER
+        );
+
+        bus.write(CPU_IRQ_STATUS, IRQ_REQUEST_TIMER);
+        assert_eq!(bus.read(CPU_IRQ_STATUS) & IRQ_REQUEST_TIMER, 0);
+    }
+
+    #[test]
+    fn irq_registers_not_aliased_to_timer() {
+        let mut bus = Bus::new();
+        bus.set_mpr(0, 0xFF);
+
+        bus.write(TIMER_STD_BASE, 0x05);
+        bus.write(TIMER_STD_BASE + 1, TIMER_CONTROL_START);
+        assert_eq!(bus.read(TIMER_STD_BASE + 1) & TIMER_CONTROL_START, 1);
+
+        bus.write(IRQ_TIMER_BASE, 0xAA);
+        bus.write(IRQ_TIMER_BASE + 1, 0x55);
+
+        assert_eq!(bus.read(IRQ_TIMER_BASE), 0xAA);
+        assert_eq!(bus.read(IRQ_TIMER_BASE + 1), 0x55);
+        assert_eq!(bus.read(TIMER_STD_BASE + 1) & TIMER_CONTROL_START, 1);
     }
 
     #[test]
@@ -3909,7 +5366,7 @@ mod tests {
         bus.write_st_port(2, 0x00);
 
         const BG_TILE_ID: usize = 200;
-        const SPRITE_TILE_ID: usize = 201;
+        const SPRITE_PATTERN_ID: usize = 201;
         const BG_PALETTE_BANK: usize = 1;
         const SPRITE_PALETTE_BANK: usize = 2;
 
@@ -3923,14 +5380,10 @@ mod tests {
             bus.vdc.vram[bg_base + 8 + row] = 0xFFFF;
         }
 
-        let sprite_base = SPRITE_TILE_ID * 16;
-        for row in 0..8 {
-            bus.vdc.vram[sprite_base + row] = 0x0080;
-            bus.vdc.vram[sprite_base + 8 + row] = 0x0000;
-        }
+        write_constant_sprite_tile(&mut bus, SPRITE_PATTERN_ID, 0x01);
 
         bus.vce.palette[0x1F] = 0x001F;
-        bus.vce.palette[0x21] = 0x03E0;
+        bus.vce.palette[0x121] = 0x03E0;
 
         bus.render_frame_from_vram();
         let bg_colour = bus.framebuffer[0];
@@ -3941,28 +5394,30 @@ mod tests {
         let y_word = ((0 + 64) & 0x03FF) as u16;
         let x_word = ((0 + 32) & 0x03FF) as u16;
         bus.vdc.satb[satb_index] = y_word;
-        bus.vdc.satb[satb_index + 1] = SPRITE_TILE_ID as u16;
-        bus.vdc.satb[satb_index + 2] = 0x0080 | (SPRITE_PALETTE_BANK as u16);
-        bus.vdc.satb[satb_index + 3] = x_word;
+        bus.vdc.satb[satb_index + 1] = x_word;
+        bus.vdc.satb[satb_index + 2] = (SPRITE_PATTERN_ID as u16) << 1;
+        bus.vdc.satb[satb_index + 3] = SPRITE_PALETTE_BANK as u16;
 
         bus.render_frame_from_vram();
         assert_eq!(bus.framebuffer[0], bg_colour);
 
-        bus.vdc.satb[satb_index + 2] &= !0x0080;
+        bus.vdc.satb[satb_index + 3] |= 0x0080;
         bus.render_frame_from_vram();
-        let sprite_colour = bus.vce.palette_rgb(0x21);
+        let sprite_colour = bus.vce.palette_rgb(0x121);
         assert_eq!(bus.framebuffer[0], sprite_colour);
     }
 
-    fn write_constant_sprite_tile(bus: &mut Bus, tile_index: usize, value: u8) {
-        let base = (tile_index * 16) & 0x7FFF;
-        let plane0 = if value & 0x01 != 0 { 0x00FF } else { 0x0000 };
-        let plane1 = if value & 0x02 != 0 { 0xFF00 } else { 0x0000 };
-        let plane2 = if value & 0x04 != 0 { 0x00FF } else { 0x0000 };
-        let plane3 = if value & 0x08 != 0 { 0xFF00 } else { 0x0000 };
-        for row in 0..8 {
-            bus.vdc.vram[(base + row) & 0x7FFF] = plane0 | plane1;
-            bus.vdc.vram[(base + row + 8) & 0x7FFF] = plane2 | plane3;
+    fn write_constant_sprite_tile(bus: &mut Bus, pattern_index: usize, value: u8) {
+        let base = (pattern_index * SPRITE_PATTERN_WORDS) & 0x7FFF;
+        let plane0 = if value & 0x01 != 0 { 0xFFFF } else { 0x0000 };
+        let plane1 = if value & 0x02 != 0 { 0xFFFF } else { 0x0000 };
+        let plane2 = if value & 0x04 != 0 { 0xFFFF } else { 0x0000 };
+        let plane3 = if value & 0x08 != 0 { 0xFFFF } else { 0x0000 };
+        for row in 0..SPRITE_PATTERN_HEIGHT {
+            bus.vdc.vram[(base + row) & 0x7FFF] = plane0;
+            bus.vdc.vram[(base + 16 + row) & 0x7FFF] = plane1;
+            bus.vdc.vram[(base + 32 + row) & 0x7FFF] = plane2;
+            bus.vdc.vram[(base + 48 + row) & 0x7FFF] = plane3;
         }
     }
 
@@ -3972,16 +5427,17 @@ mod tests {
         bus.set_mpr(0, 0xFF);
 
         bus.vce.palette[0x00] = 0x0000;
-        bus.vce.palette[0x01] = 0x7C00;
+        bus.vce.palette[0x100] = 0x0000;
+        bus.vce.palette[0x101] = 0x7C00;
 
         write_constant_sprite_tile(&mut bus, 0, 0x01);
 
         let sprite_y = 32;
         let sprite_x = 24;
         bus.vdc.satb[0] = ((sprite_y + 64) & 0x03FF) as u16;
-        bus.vdc.satb[1] = 0;
+        bus.vdc.satb[1] = ((sprite_x + 32) & 0x03FF) as u16;
         bus.vdc.satb[2] = 0x0000;
-        bus.vdc.satb[3] = ((sprite_x + 32) & 0x03FF) as u16;
+        bus.vdc.satb[3] = 0x0000;
 
         bus.write_st_port(0, 0x05);
         bus.write_st_port(1, 0x40);
@@ -3993,7 +5449,7 @@ mod tests {
         assert_eq!(bus.framebuffer[0], background_colour);
 
         let sprite_index = sprite_y as usize * FRAME_WIDTH + sprite_x as usize;
-        let sprite_colour = bus.vce.palette_rgb(0x01);
+        let sprite_colour = bus.vce.palette_rgb(0x101);
         assert_eq!(bus.framebuffer[sprite_index], sprite_colour);
         assert!(
             bus.framebuffer.iter().any(|&pixel| pixel == sprite_colour),
@@ -4008,35 +5464,27 @@ mod tests {
 
         set_vdc_control(&mut bus, VDC_CTRL_DISPLAY_FULL);
 
-        for (idx, &palette_value) in [0x01u16, 0x111u16, 0x222u16, 0x333u16].iter().enumerate() {
-            bus.vce.palette[(idx + 1) as usize] = palette_value;
-        }
-
-        for (tile, value) in (0..4).zip(1u8..) {
-            write_constant_sprite_tile(&mut bus, tile, value);
-        }
+        const BASE_PATTERN: usize = 0x200;
+        bus.vce.palette[0x101] = 0x0111;
+        bus.vce.palette[0x102] = 0x0222;
+        write_constant_sprite_tile(&mut bus, BASE_PATTERN, 0x01);
+        write_constant_sprite_tile(&mut bus, BASE_PATTERN + 1, 0x02);
 
         let sprite_base = 0;
         let sprite_y = 32;
         let sprite_x = 24;
         bus.vdc.satb[sprite_base] = ((sprite_y + 64) & 0x03FF) as u16;
-        bus.vdc.satb[sprite_base + 1] = 0;
-        bus.vdc.satb[sprite_base + 2] = 0x0100;
-        bus.vdc.satb[sprite_base + 3] = ((sprite_x + 32) & 0x03FF) as u16;
+        bus.vdc.satb[sprite_base + 1] = ((sprite_x + 32) & 0x03FF) as u16;
+        bus.vdc.satb[sprite_base + 2] = (BASE_PATTERN as u16) << 1;
+        bus.vdc.satb[sprite_base + 3] = 0x0100 | 0x0080;
 
         bus.render_frame_from_vram();
 
         let row_start = sprite_y * FRAME_WIDTH + sprite_x;
-        let colours = [
-            bus.framebuffer[row_start],
-            bus.framebuffer[row_start + 8],
-            bus.framebuffer[row_start + 16],
-            bus.framebuffer[row_start + 24],
-        ];
-        for (idx, &colour) in colours.iter().enumerate() {
-            let expected = bus.vce.palette_rgb((idx + 1) as usize);
-            assert_eq!(colour, expected, "column {} did not use tile {}", idx, idx);
-        }
+        let left = bus.framebuffer[row_start];
+        let right = bus.framebuffer[row_start + 16];
+        assert_eq!(left, bus.vce.palette_rgb(0x101));
+        assert_eq!(right, bus.vce.palette_rgb(0x102));
     }
 
     #[test]
@@ -4045,11 +5493,7 @@ mod tests {
         bus.set_mpr(0, 0xFF);
 
         const TILE_ID: usize = 0x400;
-        let tile_base = TILE_ID * 16;
-        for row in 0..8 {
-            bus.vdc.vram[(tile_base + row) & 0x7FFF] = 0xFFFF;
-            bus.vdc.vram[(tile_base + row + 8) & 0x7FFF] = 0xFFFF;
-        }
+        write_constant_sprite_tile(&mut bus, TILE_ID, 0x01);
 
         set_vdc_control(&mut bus, VDC_CTRL_DISPLAY_FULL);
 
@@ -4058,9 +5502,9 @@ mod tests {
             let base = sprite * 4;
             let x_pos = sprite as i32 * 8;
             bus.vdc.satb[base] = ((y_pos + 64) & 0x03FF) as u16;
-            bus.vdc.satb[base + 1] = TILE_ID as u16;
-            bus.vdc.satb[base + 2] = 0x0000;
-            bus.vdc.satb[base + 3] = ((x_pos + 32) & 0x03FF) as u16;
+            bus.vdc.satb[base + 1] = ((x_pos + 32) & 0x03FF) as u16;
+            bus.vdc.satb[base + 2] = (TILE_ID as u16) << 1;
+            bus.vdc.satb[base + 3] = 0x0000;
         }
 
         bus.render_frame_from_vram();
@@ -4073,11 +5517,6 @@ mod tests {
         assert_eq!(max_count, 16);
         assert_ne!(bus.vdc.status_bits() & VDC_STATUS_OR, 0);
 
-        let bg_colour = bus.vce.palette_rgb(0);
-        let seventeenth_x = 16 * 8;
-        let pixel = bus.framebuffer[y_pos * FRAME_WIDTH + seventeenth_x];
-        assert_eq!(pixel, bg_colour);
-
         let overflow_sprite = 16 * 4;
         bus.vdc.satb[overflow_sprite] = 0;
         bus.vdc.satb[overflow_sprite + 1] = 0;
@@ -4086,9 +5525,6 @@ mod tests {
 
         bus.render_frame_from_vram();
         assert_eq!(bus.vdc.status_bits() & VDC_STATUS_OR, 0);
-
-        let pixel_after = bus.framebuffer[y_pos * FRAME_WIDTH + seventeenth_x];
-        assert_eq!(pixel_after, bg_colour);
     }
 
     #[test]
@@ -4101,31 +5537,27 @@ mod tests {
         const BASE_TILE: usize = 0x300;
         const WIDTH_UNITS: usize = 2;
         const HEIGHT_UNITS: usize = 2;
-        const WIDTH_TILES: usize = WIDTH_UNITS * 2;
-        const HEIGHT_TILES: usize = HEIGHT_UNITS * 2;
+        const WIDTH_TILES: usize = WIDTH_UNITS;
+        const HEIGHT_TILES: usize = HEIGHT_UNITS;
 
         for tile in 0..(WIDTH_TILES * HEIGHT_TILES) {
-            let offset = (BASE_TILE + tile) * 16;
-            for row in 0..8 {
-                bus.vdc.vram[(offset + row) & 0x7FFF] = 0xFFFF;
-                bus.vdc.vram[(offset + row + 8) & 0x7FFF] = 0xFFFF;
-            }
+            write_constant_sprite_tile(&mut bus, BASE_TILE + tile, 0x0F);
         }
 
         let sprite_colour = 0x7C00;
-        bus.vce.palette[0x2F] = sprite_colour;
+        bus.vce.palette[0x12F] = sprite_colour;
 
         let x_pos = 40;
         let y_pos = 32;
         let satb_index = 0;
-        bus.vdc.satb[satb_index] = ((y_pos + 64) & 0x03FF) as u16 | 0x1000;
-        bus.vdc.satb[satb_index + 1] = BASE_TILE as u16;
-        bus.vdc.satb[satb_index + 2] = 0x0100 | 0x0002;
-        bus.vdc.satb[satb_index + 3] = ((x_pos + 32) & 0x03FF) as u16;
+        bus.vdc.satb[satb_index] = ((y_pos + 64) & 0x03FF) as u16;
+        bus.vdc.satb[satb_index + 1] = ((x_pos + 32) & 0x03FF) as u16;
+        bus.vdc.satb[satb_index + 2] = (BASE_TILE as u16) << 1;
+        bus.vdc.satb[satb_index + 3] = 0x1000 | 0x0100 | 0x0002;
 
         bus.render_frame_from_vram();
 
-        let colour = bus.vce.palette_rgb(0x2F);
+        let colour = bus.vce.palette_rgb(0x12F);
         let idx = (y_pos + HEIGHT_UNITS * 16 - 1) * FRAME_WIDTH + (x_pos + WIDTH_UNITS * 16 - 1);
         assert_eq!(bus.framebuffer[idx], colour);
     }
@@ -4136,33 +5568,29 @@ mod tests {
         bus.set_mpr(0, 0xFF);
 
         const BASE_TILE: usize = 0x320;
-        const TILES_WIDE: usize = 2;
-        const TILES_HIGH: usize = 8;
+        const TILES_WIDE: usize = 1;
+        const TILES_HIGH: usize = 4;
 
         set_vdc_control(&mut bus, VDC_CTRL_DISPLAY_FULL);
 
         for tile in 0..(TILES_WIDE * TILES_HIGH) {
-            let offset = (BASE_TILE + tile) * 16;
-            for row in 0..8 {
-                bus.vdc.vram[(offset + row) & 0x7FFF] = 0xFFFF;
-                bus.vdc.vram[(offset + row + 8) & 0x7FFF] = 0xFFFF;
-            }
+            write_constant_sprite_tile(&mut bus, BASE_TILE + tile, 0x0F);
         }
 
         let sprite_colour = 0x03FF;
-        bus.vce.palette[0x0F] = sprite_colour;
+        bus.vce.palette[0x10F] = sprite_colour;
 
         let x_pos = 24;
         let y_pos = 40;
         let satb_index = 0;
-        bus.vdc.satb[satb_index] = ((y_pos + 64) & 0x03FF) as u16 | 0x3000;
-        bus.vdc.satb[satb_index + 1] = BASE_TILE as u16;
-        bus.vdc.satb[satb_index + 2] = 0x0000;
-        bus.vdc.satb[satb_index + 3] = ((x_pos + 32) & 0x03FF) as u16;
+        bus.vdc.satb[satb_index] = ((y_pos + 64) & 0x03FF) as u16;
+        bus.vdc.satb[satb_index + 1] = ((x_pos + 32) & 0x03FF) as u16;
+        bus.vdc.satb[satb_index + 2] = (BASE_TILE as u16) << 1;
+        bus.vdc.satb[satb_index + 3] = 0x2000;
 
         bus.render_frame_from_vram();
 
-        let expected = bus.vce.palette_rgb(0x0F);
+        let expected = bus.vce.palette_rgb(0x10F);
         let drawn_pixels = bus
             .framebuffer
             .iter()
@@ -4224,6 +5652,224 @@ mod tests {
     }
 
     #[test]
+    fn register_select_between_low_and_high_keeps_low_target() {
+        let mut vdc = Vdc::new();
+
+        vdc.write_select(0x07);
+        vdc.write_data_low(0x34);
+        // ST0 may be rewritten before ST2; high byte must still commit to R07.
+        vdc.write_select(0x08);
+        vdc.write_data_high_direct(0x12);
+
+        assert_eq!(vdc.registers[0x07], 0x1234 & 0x03FF);
+        assert_eq!(vdc.registers[0x08], 0x0000);
+    }
+
+    #[test]
+    fn vdc_vertical_window_uses_vpr_vdw_vcr() {
+        let mut vdc = Vdc::new();
+        vdc.registers[0x0C] = 0x0F02;
+        vdc.registers[0x0D] = 0x00EF;
+        vdc.registers[0x0E] = 0x0003;
+
+        let window = vdc.vertical_window();
+        assert_eq!(window.active_start_line, 0x11);
+        assert_eq!(window.active_line_count, 0x0F0);
+        assert_eq!(window.post_active_overscan_lines, 6);
+        assert_eq!(window.vblank_start_line, 257);
+        assert_eq!(vdc.vblank_start_scanline(), 257);
+    }
+
+    #[test]
+    fn vdc_output_row_active_window_honours_vdw_vcr_gap() {
+        let mut vdc = Vdc::new();
+        vdc.registers[0x0C] = 0x0100;
+        vdc.registers[0x0D] = 0x0003; // 4 active lines
+        vdc.registers[0x0E] = 0x0002; // 5 overscan lines (VCR + 3)
+
+        for row in 0..4 {
+            assert!(
+                vdc.output_row_in_active_window(row),
+                "row {row} should be active in first display pass"
+            );
+        }
+        for row in 4..10 {
+            assert!(
+                !vdc.output_row_in_active_window(row),
+                "row {row} should be overscan"
+            );
+        }
+        for row in 10..14 {
+            assert!(
+                vdc.output_row_in_active_window(row),
+                "row {row} should be active after display-counter reset"
+            );
+        }
+    }
+
+    #[test]
+    fn line_state_index_tracks_vpr_active_start() {
+        let mut vdc = Vdc::new();
+        vdc.registers[0x0C] = 0x0302; // VSW=2, VDS=3 => start line 5
+        vdc.registers[0x0D] = 0x0001;
+
+        assert_eq!(vdc.line_state_index_for_frame_row(0), 5);
+        assert_eq!(
+            vdc.line_state_index_for_frame_row(239),
+            (5 + 239) % (LINES_PER_FRAME as usize)
+        );
+    }
+
+    #[test]
+    fn rcr_scanline_uses_active_counter_base_when_programmed() {
+        let mut vdc = Vdc::new();
+        vdc.registers[0x0C] = 0x0F02;
+        vdc.registers[0x0D] = 0x00EF;
+        vdc.registers[0x0E] = 0x0003;
+
+        assert_eq!(vdc.rcr_scanline_for_target(0x0040), Some(17));
+        assert_eq!(vdc.rcr_scanline_for_target(0x0063), Some(52));
+        // Legacy absolute-line path remains available for out-of-range values.
+        assert_eq!(vdc.rcr_scanline_for_target(0x0002), Some(2));
+    }
+
+    #[test]
+    fn map_dimensions_follow_mwr_width_height_bits() {
+        let mut vdc = Vdc::new();
+
+        vdc.registers[0x09] = 0x0000;
+        assert_eq!(vdc.map_dimensions(), (32, 32));
+
+        vdc.registers[0x09] = 0x0010;
+        assert_eq!(vdc.map_dimensions(), (64, 32));
+
+        vdc.registers[0x09] = 0x0020;
+        assert_eq!(vdc.map_dimensions(), (128, 32));
+
+        vdc.registers[0x09] = 0x0030;
+        assert_eq!(vdc.map_dimensions(), (128, 32));
+
+        vdc.registers[0x09] = 0x0050;
+        assert_eq!(vdc.map_dimensions(), (64, 64));
+    }
+
+    #[test]
+    fn map_entry_address_64x64_flat() {
+        let mut vdc = Vdc::new();
+        vdc.registers[0x09] = 0x0050; // 64x64
+
+        // HuC6270 BAT uses flat row-major addressing (MAME/Mednafen):
+        //   address = row * map_width + col
+        assert_eq!(vdc.map_entry_address_for_test(0, 0), 0x0000);
+        // Row 1, col 0: 1*64 = 64
+        assert_eq!(vdc.map_entry_address_for_test(1, 0), 64);
+        // Row 0, col 31: 31
+        assert_eq!(vdc.map_entry_address_for_test(0, 31), 31);
+        // Row 0, col 32: 32
+        assert_eq!(vdc.map_entry_address_for_test(0, 32), 32);
+        // Row 31, col 0: 31*64 = 1984
+        assert_eq!(vdc.map_entry_address_for_test(31, 0), 31 * 64);
+        // Row 32, col 0: 32*64 = 2048
+        assert_eq!(vdc.map_entry_address_for_test(32, 0), 32 * 64);
+        // Row 32, col 32: 32*64+32 = 2080
+        assert_eq!(vdc.map_entry_address_for_test(32, 32), 32 * 64 + 32);
+    }
+
+    #[test]
+    fn bat_always_starts_at_vram_zero() {
+        let mut vdc = Vdc::new();
+        for mwr in [0x0000u16, 0x0010, 0x0050, 0x1150, 0xFF50] {
+            vdc.registers[0x09] = mwr;
+            assert_eq!(vdc.map_base_address(), 0, "mwr={mwr:04X}");
+        }
+    }
+
+    #[test]
+    fn bg_disabled_when_cr_bit7_clear() {
+        let mut bus = Bus::new();
+        bus.set_mpr(0, 0xFF);
+
+        // Top-left BAT cell points to a visible tile.
+        bus.vdc.vram[0x0000] = 0x0001;
+        for row in 0..8usize {
+            bus.vdc.vram[0x0010 + row] = if row == 0 { 0x0080 } else { 0x0000 };
+            bus.vdc.vram[0x0018 + row] = 0x0000;
+        }
+        bus.vce.palette[0x001] = 0x01FF;
+
+        // BG bit (CR bit7) is clear, while increment bits 11-12 are set.
+        set_vdc_control(&mut bus, VDC_CTRL_ENABLE_SPRITES_LEGACY | (0b11 << 11));
+
+        bus.render_frame_from_vram();
+
+        assert_eq!(bus.framebuffer[0], bus.vce.palette_rgb(0));
+        assert!(!bus.bg_opaque[0]);
+    }
+
+    #[test]
+    fn tile_entry_zero_uses_tile_zero_pattern_data() {
+        let mut bus = Bus::new();
+        bus.set_mpr(0, 0xFF);
+
+        // BAT (row0,col1) is entry value 0 => tile 0.
+        bus.vdc.vram[0x0001] = 0x0000;
+        // Tile 0 row 0 plane data (overlaps BAT area by hardware design).
+        bus.vdc.vram[0x0000] = 0x0080;
+        bus.vdc.vram[0x0008] = 0x0000;
+        bus.vce.palette[0x001] = 0x01FF;
+
+        set_vdc_control(&mut bus, VDC_CTRL_ENABLE_BACKGROUND_LEGACY);
+        bus.render_frame_from_vram();
+
+        assert_eq!(bus.framebuffer[8], bus.vce.palette_rgb(0x001));
+        assert!(bus.bg_opaque[8]);
+    }
+
+    #[test]
+    fn renderer_honours_vertical_window_overscan_rows() {
+        let mut bus = Bus::new();
+        bus.set_mpr(0, 0xFF);
+
+        // Configure visible/overscan colours.
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
+        bus.write(VCE_DATA_ADDR, 0x00);
+        bus.write(VCE_DATA_HIGH_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x01);
+        bus.write(VCE_DATA_ADDR, 0x3F);
+        bus.write(VCE_DATA_HIGH_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
+        bus.write(VCE_DATA_ADDR, 0x00);
+        bus.write(VCE_DATA_HIGH_ADDR, 0x3F);
+
+        // Single opaque tile in the top-left BAT cell.
+        write_vram_word(&mut bus, 0x0000, 0x1001);
+        for row in 0..8u16 {
+            write_vram_word(&mut bus, 0x0010 + row, 0xFFFF);
+            write_vram_word(&mut bus, 0x0018 + row, 0x0000);
+        }
+
+        set_vdc_control(&mut bus, VDC_CTRL_DISPLAY_FULL);
+        bus.write_st_port(0, 0x0C);
+        bus.write_st_port(1, 0x00);
+        bus.write_st_port(2, 0x01);
+        bus.write_st_port(0, 0x0D);
+        bus.write_st_port(1, 0x03); // 4 active lines
+        bus.write_st_port(2, 0x00);
+        bus.write_st_port(0, 0x0E);
+        bus.write_st_port(1, 0x02); // 5 overscan lines
+        bus.write_st_port(2, 0x00);
+
+        bus.render_frame_from_vram();
+        let active_pixel = bus.framebuffer[0];
+        let overscan_pixel = bus.framebuffer[6 * FRAME_WIDTH];
+        assert_ne!(active_pixel, overscan_pixel);
+        assert_eq!(overscan_pixel, bus.vce.palette_rgb(0x100));
+    }
+
+    #[test]
     fn background_horizontal_zoom_scales_source() {
         let mut baseline = prepare_bus_for_zoom();
         baseline.render_frame_from_vram();
@@ -4234,9 +5880,7 @@ mod tests {
         assert_ne!(base8, base16);
 
         let mut zoomed = prepare_bus_for_zoom();
-        zoomed.write_st_port(0, 0x0A);
-        zoomed.write_st_port(1, 0x08);
-        zoomed.write_st_port(2, 0x00);
+        zoomed.vdc.set_zoom_for_test(0x08, 0x0010);
         zoomed.render_frame_from_vram();
         let zoom0 = zoomed.framebuffer[0];
         let zoom16 = zoomed.framebuffer[16];
@@ -4248,14 +5892,14 @@ mod tests {
 
     #[test]
     fn background_horizontal_zoom_shrinks_source() {
-        let (baseline, zoomed) = render_zoom_pair(0x0A, 0x18);
+        let (baseline, zoomed) = render_zoom_pair(0x18);
         assert_eq!(zoomed[0], baseline[0]);
         assert_eq!(zoomed[16], baseline[24]);
     }
 
     #[test]
     fn background_horizontal_zoom_extreme_zoom_in() {
-        let (baseline, zoomed) = render_zoom_pair(0x0A, 0x01);
+        let (baseline, zoomed) = render_zoom_pair(0x01);
         let colour = baseline[0];
         for x in 0..16 {
             assert_eq!(zoomed[x], colour);
@@ -4264,25 +5908,23 @@ mod tests {
 
     #[test]
     fn background_horizontal_zoom_extreme_shrink() {
-        let (baseline, zoomed) = render_zoom_pair(0x0A, 0x1F);
+        let (baseline, zoomed) = render_zoom_pair(0x1F);
         assert_eq!(zoomed[0], baseline[0]);
         assert_eq!(zoomed[8], baseline[15]);
         assert_eq!(zoomed[16], baseline[31]);
     }
 
     #[test]
-    fn background_tile_flip_bits_are_respected() {
+    fn background_priority_bit_sets_bg_priority_mask() {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
 
         set_vdc_control(&mut bus, VDC_CTRL_DISPLAY_FULL);
 
         const TILE_ID: usize = 0x180;
-        let tile_entry = (TILE_ID as u16) & 0x03FF;
+        let tile_entry = (TILE_ID as u16) & 0x07FF;
         bus.vdc.vram[0] = tile_entry;
-        bus.vdc.vram[1] = tile_entry | 0x0400;
-        bus.vdc.vram[64] = tile_entry | 0x0800;
-        bus.vdc.vram[65] = tile_entry | 0x0C00;
+        bus.vdc.vram[1] = tile_entry | 0x0800;
 
         let tile_base = (TILE_ID * 16) & 0x7FFF;
         bus.vdc.vram[(tile_base) & 0x7FFF] = 0x0080;
@@ -4300,15 +5942,10 @@ mod tests {
         let bg = bus.vce.palette_rgb(0x00);
 
         assert_eq!(bus.framebuffer[0], colour);
-        assert_eq!(bus.framebuffer[8], bg);
-        assert_eq!(bus.framebuffer[15], colour);
-        let v_top = 16 * FRAME_WIDTH;
-        let v_bottom = (16 + 7) * FRAME_WIDTH;
-        assert_eq!(bus.framebuffer[v_top], bg);
-        assert_eq!(bus.framebuffer[v_bottom], colour);
-        let hv_index = (16 + 7) * FRAME_WIDTH + 15;
-        assert_eq!(bus.framebuffer[hv_index], colour);
-        assert_eq!(bus.framebuffer[(16 + 7) * FRAME_WIDTH + 8], bg);
+        assert_eq!(bus.framebuffer[8], colour);
+        assert_eq!(bus.framebuffer[1], bg);
+        assert!(!bus.bg_priority[0]);
+        assert!(bus.bg_priority[8]);
     }
 
     #[test]
@@ -4316,16 +5953,18 @@ mod tests {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
 
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0xF0);
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x00);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
 
-        bus.write(VCE_CONTROL_ADDR, 0x10);
+        bus.write(VCE_ADDRESS_ADDR, 0x10);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x3F);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
 
-        bus.write(VCE_CONTROL_ADDR, 0x20);
+        bus.write(VCE_ADDRESS_ADDR, 0x20);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x00);
         bus.write(VCE_DATA_HIGH_ADDR, 0x3F);
 
@@ -4334,7 +5973,7 @@ mod tests {
         bus.write_st_port(2, 0x00);
 
         let tile_index = 0x0100u16;
-        let priority_entry = tile_index | 0x1000 | 0x8000;
+        let priority_entry = tile_index | 0x1000 | 0x0800;
         let addr_priority = bus.vdc.map_entry_address_for_test(0, 0) as u16;
         write_vram_word(&mut bus, addr_priority, priority_entry);
 
@@ -4363,7 +6002,7 @@ mod tests {
 
     #[test]
     fn background_vertical_zoom_scales_source() {
-        let (baseline, zoomed) = render_vertical_zoom_pair(0x0B, 0x08);
+        let (baseline, zoomed) = render_vertical_zoom_pair(0x08);
         assert_ne!(baseline[0], baseline[8 * FRAME_WIDTH]);
         assert_ne!(baseline[8 * FRAME_WIDTH], baseline[16 * FRAME_WIDTH]);
         assert_eq!(zoomed[0], baseline[0]);
@@ -4373,7 +6012,7 @@ mod tests {
 
     #[test]
     fn background_vertical_zoom_extreme_zoom_in() {
-        let (baseline, zoomed) = render_vertical_zoom_pair(0x0B, 0x01);
+        let (baseline, zoomed) = render_vertical_zoom_pair(0x01);
         let colour = baseline[0];
         for y in 0..16 {
             assert_eq!(zoomed[y * FRAME_WIDTH], colour);
@@ -4382,7 +6021,7 @@ mod tests {
 
     #[test]
     fn background_vertical_zoom_extreme_shrink() {
-        let (baseline, zoomed) = render_vertical_zoom_pair(0x0B, 0x1F);
+        let (baseline, zoomed) = render_vertical_zoom_pair(0x1F);
         assert_eq!(zoomed[0], baseline[0]);
         assert_eq!(zoomed[8 * FRAME_WIDTH], baseline[15 * FRAME_WIDTH]);
         assert_eq!(zoomed[16 * FRAME_WIDTH], baseline[31 * FRAME_WIDTH]);
@@ -4434,10 +6073,10 @@ mod tests {
         bus.set_mpr(1, 0xFF);
 
         // VCE palette write via 0x2000-mirrored address space.
-        bus.write(0x2400, 0x00); // control low
-        bus.write(0x2401, 0x00); // control high (also sets brightness)
-        bus.write(0x2402, 0x56); // data low
-        bus.write(0x2403, 0x34); // data high
+        bus.write(0x2402, 0x00); // address low
+        bus.write(0x2403, 0x00); // address high
+        bus.write(0x2404, 0x56); // data low
+        bus.write(0x2405, 0x34); // data high
         assert_eq!(bus.vce_palette_word(0x0000), 0x3456);
 
         // VDC register select/data via mirrored offsets inside 0x0000-0x03FF.
@@ -4474,8 +6113,8 @@ mod tests {
         bus.set_mpr(0, 0xFF);
 
         // Select palette index 0x0010.
-        bus.write(VCE_CONTROL_ADDR, 0x10);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_ADDR, 0x10);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
 
         bus.write(VCE_DATA_ADDR, 0x34);
         bus.write(VCE_DATA_HIGH_ADDR, 0x12);
@@ -4483,8 +6122,8 @@ mod tests {
         assert_eq!(bus.vce_palette_word(0x0010), 0x1234);
 
         // Reading back should return the stored value and advance the index.
-        bus.write(VCE_CONTROL_ADDR, 0x10);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_ADDR, 0x10);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         let lo = bus.read(VCE_DATA_ADDR);
         let hi = bus.read(VCE_DATA_HIGH_ADDR);
         assert_eq!(lo, 0x34);
@@ -4497,8 +6136,8 @@ mod tests {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
 
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
 
         for i in 0..4u16 {
             let value = 0x1000 | i;
@@ -4528,12 +6167,12 @@ mod tests {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
 
-        // Set brightness to mid-level (0x8) and index to zero.
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0x80);
+        // Select palette index zero.
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
 
-        // Write palette word with R=0x8, G=0xA, B=0xF (raw 4-bit values).
-        let raw = (0x8 << 8) | (0xA << 4) | 0xF;
+        // Write palette word with G=3, R=5, B=7 (raw layout: GGGRRRBBB).
+        let raw = (0x3 << 6) | (0x5 << 3) | 0x7;
         bus.write(VCE_DATA_ADDR, (raw & 0xFF) as u8);
         bus.write(VCE_DATA_HIGH_ADDR, (raw >> 8) as u8);
 
@@ -4542,9 +6181,9 @@ mod tests {
         let g = ((rgb >> 8) & 0xFF) as u8;
         let b = (rgb & 0xFF) as u8;
 
-        assert!(r > 0 && r < 255);
-        assert!(g > r, "expected green component to dominate");
-        assert!(b >= g, "blue should be largest for value 7");
+        assert_eq!(r, (0x5 * 255 / 0x07) as u8);
+        assert_eq!(g, (0x3 * 255 / 0x07) as u8);
+        assert_eq!(b, 255);
     }
 
     #[cfg(test)]
@@ -4574,8 +6213,8 @@ mod tests {
         bus.set_mpr(0, 0xFF);
 
         // Write a vivid palette entry at index 0.
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0xF0); // brightness max
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         let raw_colour = 0x01FF; // full intensity (R=7,G=7,B=7)
         bus.write(VCE_DATA_ADDR, (raw_colour & 0x00FF) as u8);
         bus.write(VCE_DATA_HIGH_ADDR, (raw_colour >> 8) as u8);
@@ -4604,19 +6243,18 @@ mod tests {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
 
-        // Configure brightness to max.
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0xF0);
         // Palette index 0 -> background colour.
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0xF0);
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x00);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
         // Palette index 0x10 -> black, 0x11 -> bright red.
-        bus.write(VCE_CONTROL_ADDR, 0x10);
+        bus.write(VCE_ADDRESS_ADDR, 0x10);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x00);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
-        bus.write(VCE_CONTROL_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x38); // red max
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
 
@@ -4667,16 +6305,17 @@ mod tests {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
 
-        // Configure brightness and palette entries.
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0xF0);
-        bus.write(VCE_CONTROL_ADDR, 0x00);
+        // Configure palette entries.
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x00);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
-        bus.write(VCE_CONTROL_ADDR, 0x10);
+        bus.write(VCE_ADDRESS_ADDR, 0x10);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x00);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
-        bus.write(VCE_CONTROL_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x38);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
 
@@ -4730,12 +6369,12 @@ mod tests {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
 
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0xF0);
-        bus.write(VCE_CONTROL_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x00);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
-        bus.write(VCE_CONTROL_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x38);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
 
@@ -4778,12 +6417,12 @@ mod tests {
         bus.set_mpr(0, 0xFF);
 
         // Configure palettes: index 0 = background, 0x14 = visible colour.
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0xF0);
-        bus.write(VCE_CONTROL_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x00);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
-        bus.write(VCE_CONTROL_ADDR, 0x14);
+        bus.write(VCE_ADDRESS_ADDR, 0x14);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x38); // bright red
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
 
@@ -4850,11 +6489,12 @@ mod tests {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
 
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0xF0);
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x00);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
-        bus.write(VCE_CONTROL_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x38);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
 
@@ -4907,11 +6547,12 @@ mod tests {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
 
-        bus.write(VCE_CONTROL_ADDR, 0x00);
-        bus.write(VCE_CONTROL_HIGH_ADDR, 0xF0);
+        bus.write(VCE_ADDRESS_ADDR, 0x00);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x00);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
-        bus.write(VCE_CONTROL_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_ADDR, 0x11);
+        bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
         bus.write(VCE_DATA_ADDR, 0x38);
         bus.write(VCE_DATA_HIGH_ADDR, 0x00);
 
@@ -5015,6 +6656,35 @@ mod tests {
         assert!(
             seen_second_high,
             "VBlank status bit never asserted again after clearing"
+        );
+    }
+
+    #[test]
+    fn vdc_tick_holds_on_first_frame_trigger_for_large_cycle_chunk() {
+        let mut vdc = Vdc::new();
+        vdc.scanline = 0;
+        vdc.in_vblank = false;
+        vdc.frame_trigger = false;
+        vdc.scroll_line_valid.fill(false);
+        let frame_cycles = VDC_VBLANK_INTERVAL;
+
+        // One large chunk can cover more than a full frame worth of scanline steps.
+        // We should stop at the first VBlank/frame trigger and preserve latched line state.
+        let _ = vdc.tick(frame_cycles);
+        assert!(vdc.frame_ready(), "expected frame trigger after large tick");
+        assert_eq!(
+            vdc.scanline, VDC_VISIBLE_LINES,
+            "scanline should stop at first frame trigger"
+        );
+        assert!(vdc.scroll_line_valid[1], "line 1 should be latched");
+        assert!(
+            vdc.scroll_line_valid[VDC_VISIBLE_LINES as usize],
+            "last visible line should be latched"
+        );
+        assert!(
+            !vdc.scroll_line_valid
+                [(VDC_VISIBLE_LINES as usize + 1).min(LINES_PER_FRAME as usize - 1)],
+            "post-visible lines should remain unlatched until frame is consumed"
         );
     }
 
@@ -5150,6 +6820,7 @@ mod tests {
         bus.write_st_port(0, 0x01); // MARR
         bus.write_st_port(1, 0x00);
         bus.write_st_port(2, 0x00);
+        bus.write_st_port(0, 0x02); // select VRAM data register for reads
 
         let lo = bus.read(0x2002);
         assert_eq!(lo, 0x34);
@@ -5164,6 +6835,52 @@ mod tests {
         let next_hi = bus.read(0x2003);
         assert_eq!(next_hi, 0x56);
         assert_eq!(bus.vdc_register(1), Some(0x0002));
+    }
+
+    #[test]
+    fn vdc_data_low_port_always_returns_low_byte() {
+        let mut bus = Bus::new();
+        bus.set_mpr(1, 0xFF);
+
+        write_vram_word(&mut bus, 0x0000, 0x1234);
+        write_vram_word(&mut bus, 0x0001, 0x5678);
+
+        bus.write_st_port(0, 0x01); // MARR
+        bus.write_st_port(1, 0x00);
+        bus.write_st_port(2, 0x00);
+        bus.write_st_port(0, 0x02); // data register
+
+        let lo1 = bus.read(0x2002);
+        let lo2 = bus.read(0x2002);
+        assert_eq!(lo1, 0x34);
+        assert_eq!(lo2, 0x34);
+        assert_eq!(bus.vdc_register(1), Some(0x0000));
+
+        let hi = bus.read(0x2003);
+        assert_eq!(hi, 0x12);
+        assert_eq!(bus.vdc_register(1), Some(0x0001));
+    }
+
+    #[test]
+    fn vdc_data_port_reads_selected_register_for_non_vram_index() {
+        let mut bus = Bus::new();
+        bus.set_mpr(1, 0xFF);
+
+        // Write control register (R05) through normal data ports.
+        bus.write_st_port(0, 0x05);
+        bus.write_st_port(1, 0x5A);
+        bus.write_st_port(2, 0x08);
+
+        // Read back from data ports and ensure we get R05 contents, not VRAM.
+        bus.write_st_port(0, 0x05);
+        let lo = bus.read(0x2002);
+        let hi = bus.read(0x2003);
+        assert_eq!(lo, 0x5A);
+        assert_eq!(hi, 0x08);
+        assert_eq!(bus.vdc_register(0x05), Some(0x085A));
+
+        // MARR should remain untouched by non-VRAM register reads.
+        assert_eq!(bus.vdc_register(0x01), Some(0x0000));
     }
 
     #[test]
@@ -5286,7 +7003,7 @@ mod tests {
         }
         assert_eq!(bus.vdc_register(0x00), Some(VRAM_BASE + words.len() as u16));
         assert_eq!(
-            bus.read_io(VCE_CONTROL_ADDR as usize) & 0xFF,
+            bus.read_io(VCE_ADDRESS_ADDR as usize) & 0xFF,
             words.len() as u8
         );
         assert_ne!(bus.vdc_status_bits() & VDC_STATUS_DV, 0);
@@ -5295,19 +7012,15 @@ mod tests {
     #[test]
     fn vdc_vram_dma_copies_words_and_raises_status() {
         let mut bus = Bus::new();
-        // Ensure source addresses point to RAM, not the hardware page.
-        bus.set_mpr(0, 0xF8);
         bus.read_io(0x00); // clear initial VBlank
 
         const SOURCE: u16 = 0x0200;
         let words = [0x0AA0u16, 0x0BB1, 0x0CC2];
         for (index, &word) in words.iter().enumerate() {
-            let base = SOURCE.wrapping_add((index as u16) * 2);
-            bus.write(base, (word & 0x00FF) as u8);
-            bus.write(base.wrapping_add(1), (word >> 8) as u8);
+            bus.vdc.vram[(SOURCE as usize + index) & 0x7FFF] = word;
         }
 
-        // Configure VRAM DMA: enable IRQ, set source/destination, and trigger length=3.
+        // Configure VRAM DMA: enable IRQ, set source/destination, and trigger by writing LENR MSB.
         bus.write_st_port(0, 0x0F);
         bus.write_st_port(1, DMA_CTRL_IRQ_VRAM as u8);
         bus.write_st_port(2, 0x00);
@@ -5321,11 +7034,7 @@ mod tests {
         bus.write_st_port(2, 0x05);
 
         bus.write_st_port(0, 0x12);
-        bus.write_st_port(1, words.len() as u8);
-        bus.write_st_port(2, 0x00);
-
-        bus.write_st_port(0, 0x0C);
-        bus.write_st_port(1, DCR_ENABLE_VRAM_DMA);
+        bus.write_st_port(1, (words.len() as u16 - 1) as u8);
         bus.write_st_port(2, 0x00);
 
         assert_eq!(bus.vdc_vram_word(0x0500), 0x0AA0);
@@ -5333,9 +7042,10 @@ mod tests {
         assert_eq!(bus.vdc_vram_word(0x0502), 0x0CC2);
         assert_eq!(
             bus.vdc_register(0x10),
-            Some(SOURCE.wrapping_add((words.len() as u16) * 2))
+            Some(SOURCE.wrapping_add(words.len() as u16))
         );
         assert_eq!(bus.vdc_register(0x11), Some(0x0503));
+        assert_eq!(bus.vdc_register(0x12), Some(0xFFFF));
 
         assert_eq!(
             bus.pending_interrupts() & IRQ_REQUEST_IRQ1,
@@ -5354,8 +7064,7 @@ mod tests {
 
         // Configure VRAM DMA with IRQ enabled and execute a single-word copy.
         const SOURCE: u16 = 0x0100;
-        bus.write(SOURCE, 0xAD);
-        bus.write(SOURCE.wrapping_add(1), 0xDE);
+        bus.vdc.vram[SOURCE as usize & 0x7FFF] = 0xDEAD;
 
         bus.write_st_port(0, 0x0F);
         bus.write_st_port(1, DMA_CTRL_IRQ_VRAM as u8);
@@ -5367,11 +7076,7 @@ mod tests {
         bus.write_st_port(1, 0x00);
         bus.write_st_port(2, 0x02);
         bus.write_st_port(0, 0x12);
-        bus.write_st_port(1, 0x01);
-        bus.write_st_port(2, 0x00);
-
-        bus.write_st_port(0, 0x0C);
-        bus.write_st_port(1, DCR_ENABLE_VRAM_DMA);
+        bus.write_st_port(1, 0x00);
         bus.write_st_port(2, 0x00);
 
         assert_eq!(
@@ -5389,8 +7094,7 @@ mod tests {
         bus.read_io(0x00);
 
         const SOURCE: u16 = 0x0400;
-        bus.write(SOURCE, 0x34);
-        bus.write(SOURCE.wrapping_add(1), 0x12);
+        bus.vdc.vram[SOURCE as usize & 0x7FFF] = 0x1234;
 
         // Trigger VRAM DMA.
         bus.write_st_port(0, 0x0F);
@@ -5403,11 +7107,7 @@ mod tests {
         bus.write_st_port(1, 0x00);
         bus.write_st_port(2, 0x03);
         bus.write_st_port(0, 0x12);
-        bus.write_st_port(1, 0x01);
-        bus.write_st_port(2, 0x00);
-
-        bus.write_st_port(0, 0x0C);
-        bus.write_st_port(1, DCR_ENABLE_VRAM_DMA);
+        bus.write_st_port(1, 0x00);
         bus.write_st_port(2, 0x00);
 
         assert_eq!(
@@ -5635,6 +7335,12 @@ mod tests {
     fn vdc_rcr_flag_clears_on_status_read() {
         let mut bus = Bus::new();
         bus.set_mpr(1, 0xFF);
+        // Enable RCR interrupt (CR bit 2) — required for the RR status flag
+        // to be raised on raster counter match (per HuC6270 hardware).
+        bus.write_st_port(0, 0x05);
+        bus.write_st_port(1, 0x04);
+        bus.write_st_port(2, 0x00);
+        // Set RCR target to scanline 2
         bus.write_st_port(0, 0x06);
         bus.write_st_port(1, 0x02);
         bus.write_st_port(2, 0x00);
@@ -5700,6 +7406,9 @@ mod tests {
         bus.write(0xFF60, PSG_REG_COUNT as u8);
         bus.write(0xFF61, 0x1F);
 
+        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
+        bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | 0x1F);
+
         bus.write(0xFF60, PSG_REG_TIMER_LO as u8);
         bus.write(0xFF61, 0x20);
         bus.write(0xFF60, PSG_REG_TIMER_HI as u8);
@@ -5712,5 +7421,163 @@ mod tests {
         }
         let samples = bus.take_audio_samples();
         assert!(samples.iter().any(|s| *s > 0));
+    }
+
+    #[test]
+    fn psg_dda_mode_outputs_direct_level() {
+        let mut bus = Bus::new();
+
+        bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
+        bus.write(0xFF61, 0x00);
+        bus.write(0xFF60, PSG_REG_MAIN_BALANCE as u8);
+        bus.write(0xFF61, 0xFF);
+        bus.write(0xFF60, PSG_REG_CH_BALANCE as u8);
+        bus.write(0xFF61, 0xFF);
+        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
+        bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | PSG_CH_CTRL_DDA | 0x1F);
+
+        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
+        bus.write(0xFF61, 0x1F);
+        let hi = bus.psg_sample();
+
+        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
+        bus.write(0xFF61, 0x00);
+        let lo = bus.psg_sample();
+
+        assert!(hi > 0, "DDA high level should produce positive sample");
+        assert!(lo < 0, "DDA low level should produce negative sample");
+    }
+
+    #[test]
+    fn psg_noise_channel_changes_sample_values() {
+        let mut bus = Bus::new();
+
+        bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
+        bus.write(0xFF61, 0x04); // channel 4 supports noise
+        bus.write(0xFF60, PSG_REG_MAIN_BALANCE as u8);
+        bus.write(0xFF61, 0xFF);
+        bus.write(0xFF60, PSG_REG_CH_BALANCE as u8);
+        bus.write(0xFF61, 0xFF);
+        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
+        bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | 0x1F);
+        bus.write(0xFF60, PSG_REG_NOISE_CTRL as u8);
+        bus.write(0xFF61, PSG_NOISE_ENABLE | 0x1F);
+
+        let mut distinct = std::collections::BTreeSet::new();
+        for _ in 0..64 {
+            distinct.insert(bus.psg_sample());
+        }
+        assert!(
+            distinct.len() > 1,
+            "noise channel should not output a constant level"
+        );
+    }
+
+    #[test]
+    fn psg_balance_registers_affect_output_amplitude() {
+        let mut bus = Bus::new();
+
+        bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
+        bus.write(0xFF61, 0x00);
+        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
+        bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | PSG_CH_CTRL_DDA | 0x1F);
+        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
+        bus.write(0xFF61, 0x1F);
+        bus.write(0xFF60, PSG_REG_CH_BALANCE as u8);
+        bus.write(0xFF61, 0xFF);
+
+        bus.write(0xFF60, PSG_REG_MAIN_BALANCE as u8);
+        bus.write(0xFF61, 0xFF);
+        let full = bus.psg_sample().abs();
+
+        bus.write(0xFF60, PSG_REG_MAIN_BALANCE as u8);
+        bus.write(0xFF61, 0x11);
+        let reduced = bus.psg_sample().abs();
+
+        assert!(full > 0);
+        assert!(reduced < full);
+    }
+
+    #[test]
+    fn psg_wave_writes_ignored_while_channel_enabled() {
+        let mut bus = Bus::new();
+
+        bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
+        bus.write(0xFF61, 0x00);
+        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
+        bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | 0x1F);
+        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
+        bus.write(0xFF61, 0x1F);
+
+        assert_eq!(bus.psg.waveform_ram[0], 0);
+        assert_eq!(bus.psg.channels[0].wave_write_pos, 0);
+    }
+
+    #[test]
+    fn psg_clearing_dda_resets_wave_write_index() {
+        let mut bus = Bus::new();
+
+        bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
+        bus.write(0xFF61, 0x00);
+        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
+        bus.write(0xFF61, 0x00);
+        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
+        bus.write(0xFF61, 0x04);
+        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
+        bus.write(0xFF61, 0x05);
+        assert_eq!(bus.psg.channels[0].wave_write_pos, 2);
+
+        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
+        bus.write(0xFF61, PSG_CH_CTRL_DDA);
+        bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
+        bus.write(0xFF61, 0x00);
+        assert_eq!(bus.psg.channels[0].wave_write_pos, 0);
+
+        bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
+        bus.write(0xFF61, 0x1E);
+        assert_eq!(bus.psg.waveform_ram[0], 0x1E);
+    }
+
+    #[test]
+    fn psg_frequency_divider_uses_inverse_pitch_relation() {
+        fn transition_count_for_divider(divider: u16) -> usize {
+            let mut bus = Bus::new();
+            bus.write(0xFF60, PSG_REG_CH_SELECT as u8);
+            bus.write(0xFF61, 0x00);
+            bus.write(0xFF60, PSG_REG_MAIN_BALANCE as u8);
+            bus.write(0xFF61, 0xFF);
+            bus.write(0xFF60, PSG_REG_CH_BALANCE as u8);
+            bus.write(0xFF61, 0xFF);
+            bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
+            bus.write(0xFF61, 0x00);
+            bus.write(0xFF60, PSG_REG_WAVE_DATA as u8);
+            for i in 0..PSG_WAVE_SIZE {
+                bus.write(0xFF61, if i & 0x01 == 0 { 0x00 } else { 0x1F });
+            }
+            bus.write(0xFF60, PSG_REG_FREQ_LO as u8);
+            bus.write(0xFF61, divider as u8);
+            bus.write(0xFF60, PSG_REG_FREQ_HI as u8);
+            bus.write(0xFF61, ((divider >> 8) as u8) & 0x0F);
+            bus.write(0xFF60, PSG_REG_CH_CONTROL as u8);
+            bus.write(0xFF61, PSG_CH_CTRL_KEY_ON | 0x1F);
+
+            let mut transitions = 0usize;
+            let mut prev = bus.psg_sample();
+            for _ in 0..2048 {
+                let sample = bus.psg_sample();
+                if (sample >= 0) != (prev >= 0) {
+                    transitions += 1;
+                }
+                prev = sample;
+            }
+            transitions
+        }
+
+        let fast = transition_count_for_divider(0x0001);
+        let slow = transition_count_for_divider(0x0FFF);
+        assert!(
+            fast > slow.saturating_mul(8),
+            "expected divider 0x001 to run much faster than 0xFFF (fast={fast}, slow={slow})"
+        );
     }
 }

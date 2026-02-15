@@ -13,9 +13,10 @@ Goal: boot and run `roms/Kato-chan & Ken-chan (Japan).pce` with accurate CPU, me
 - [x] Implement `BBS`/`BBR` branch-on-bit instructions.
 - [x] Implement `CSH`/`CSL`, `SET`, `CLA/CLX/CLY`, `SAX/SAY/SXY`, and `BSR`.
 - [x] Allow CPU to service any pending bus IRQ automatically without manual flag poking.
-- [ ] Validate block move cycle timing and hardware edge cases (e.g., I/O register accesses, zero-length transfers).
-- [ ] Add full interrupt handling for NMI, IRQ1/IRQ2, and timer sources; wire status register pushes/pops and vector fetch.
-- [ ] Introduce instruction cycle tables and verify against test ROMs (e.g., `nestest`-style suites or HuC6280 diagnostics).
+- [x] Validate block move cycle timing and hardware edge cases (e.g., I/O register accesses, zero-length transfers).
+- [x] Add full interrupt handling for NMI, IRQ1/IRQ2, and timer sources; wire status register pushes/pops and vector fetch.
+- [x] Introduce instruction cycle tables for all currently implemented HuC6280 opcodes.
+- [ ] Verify cycle timing against test ROMs (e.g., `nestest`-style suites or HuC6280 diagnostics).
 
 ## Stage 2 – Memory Map & Devices
 - [x] Wire `$FF80`–`$FF87` memory-mapped MPR registers and basic I/O page backing.
@@ -43,7 +44,7 @@ Goal: boot and run `roms/Kato-chan & Ken-chan (Japan).pce` with accurate CPU, me
   - [x] Model VDC DMA handshakes (SATB auto-transfer DS flag, DCR-driven CRAM uploads with DV/busy timing).
 - [x] Track per-scanline sprite density and raise the OR status flag when more than 16 sprites overlap one scanline (with test coverage).
 - [ ] Integrate framebuffer presentation with SDL, keep video preview toggles in README up to date.
-- [ ] Implement PSG (HuC6280 APU) channels and timers; provide audio mixing interface.
+- [x] Implement PSG (HuC6280 APU) channels and timers; provide audio mixing interface.
 - [ ] Integrate a host front-end (e.g., SDL2) for video/audio/output and controller input.
 
 ## Stage 4 – Tooling & UX
@@ -56,4 +57,4 @@ Goal: boot and run `roms/Kato-chan & Ken-chan (Japan).pce` with accurate CPU, me
 - [x] Fill out shift/rotate and stack push/pull instructions with coverage.
 - [x] Implement `STZ`/`TSB`/`TRB` plus `RTI`/`WAI` with interrupt scaffolding.
 - [x] Implement HuC6280 block moves with unit coverage for each addressing pattern.
-- [ ] Validate block move cycle timing against reference hardware behaviour.
+- [x] Validate block move cycle timing against reference hardware behaviour.
