@@ -976,6 +976,20 @@ impl Bus {
             }
             BankMapping::Hardware => {
                 let io_offset = (addr as usize) & (PAGE_SIZE - 1);
+                // Real PCE hardware only decodes I/O at offsets $0000-$17FF
+                // (A12:A10 selects VDC/VCE/PSG/Timer/Joypad/IRQ).  Offsets
+                // $1800-$1FFF have no I/O device; reads fall through to the
+                // HuCard ROM bus.  This is essential for reading interrupt
+                // vectors ($1FF6-$1FFF) when MPR7=$FF at reset.
+                if io_offset >= 0x1800 {
+                    let rom_pages = self.rom_pages();
+                    if rom_pages > 0 {
+                        let rom_page = Self::mirror_rom_bank(0xFF, rom_pages);
+                        let rom_addr = rom_page * PAGE_SIZE + io_offset;
+                        return self.rom.get(rom_addr).copied().unwrap_or(0xFF);
+                    }
+                    return 0xFF;
+                }
                 let value = self.read_io_internal(io_offset);
                 self.refresh_vdc_irq();
                 #[cfg(feature = "trace_hw_writes")]
@@ -1858,6 +1872,10 @@ impl Bus {
 
     pub fn vdc_satb_pending(&self) -> bool {
         self.vdc.satb_pending()
+    }
+
+    pub fn vdc_satb_written(&self) -> bool {
+        self.vdc.satb_written
     }
 
     pub fn vdc_satb_source(&self) -> u16 {
@@ -3217,6 +3235,11 @@ struct Timer {
 #[derive(Clone, bincode::Encode, bincode::Decode)]
 struct Vdc {
     registers: [u16; VDC_REGISTER_COUNT],
+    /// Per-register data latch (MAME's m_vdc_data).  ST1 writes the low byte
+    /// of `vdc_data[AR]`; ST2 writes the high byte and commits the full word.
+    /// Unlike `registers[]`, this is NOT overwritten by VRAM read/write side
+    /// effects, so interleaved writes to different registers work correctly.
+    vdc_data: [u16; VDC_REGISTER_COUNT],
     vram: Vec<u16>,
     satb: [u16; 0x100],
     selected: u8,
@@ -3347,6 +3370,7 @@ impl Vdc {
     fn new() -> Self {
         let mut vdc = Self {
             registers: [0; VDC_REGISTER_COUNT],
+            vdc_data: [0; VDC_REGISTER_COUNT],
             vram: vec![0; 0x8000],
             satb: [0; 0x100],
             selected: 0,
@@ -3464,6 +3488,7 @@ impl Vdc {
 
     fn reset(&mut self) {
         self.registers.fill(0);
+        self.vdc_data.fill(0);
         self.vram.fill(0);
         self.satb.fill(0);
         self.selected = 0;
@@ -3968,9 +3993,19 @@ impl Vdc {
     }
 
     fn write_data_low(&mut self, value: u8) {
+        let index = self.selected_register() as usize;
         self.latch_low = value;
         self.pending_write_register = Some(self.selected_register());
         self.st0_locked_until_commit = true;
+
+        // Per-register data latch (MAME m_vdc_data): ST1 writes the low byte
+        // of the CURRENTLY SELECTED register.  This is per-register, so
+        // interleaved ST1 writes to different registers don't clobber each
+        // other's low bytes.
+        if index < self.vdc_data.len() {
+            self.vdc_data[index] = (self.vdc_data[index] & 0xFF00) | value as u16;
+        }
+
         if self.pending_write_register == Some(0x02) {
             self.vram_data_low_writes = self.vram_data_low_writes.saturating_add(1);
         }
@@ -3998,15 +4033,19 @@ impl Vdc {
             self.pending_write_register,
             self.write_phase
         );
-        let index = self.selected_register() as usize;
-        if matches!(index, 0x02 | 0x0A | 0x0B | 0x0C | 0x0F | 0x12 | 0x13 | 0x14) {
+        if matches!(index, 0x02 | 0x0A | 0x0B | 0x0C | 0x12 | 0x14) {
             // HuC6270: these registers only commit on the high-byte write
-            // (ST2).  BXR/BYR are NOT included — MAME's COMBINE_DATA merges
-            // each byte into the register immediately.
+            // (ST2).  $02 (VWR) must wait for both bytes before VRAM write;
+            // $12 (LENR) must wait before starting DMA.  Timing registers
+            // ($0A/$0B/$0C) also defer for safety.
             self.write_phase = VdcWritePhase::High;
             self.ignore_next_high_byte = false;
         } else {
-            // Other non-side-effecting registers commit on low-byte write.
+            // MAME's COMBINE_DATA merges each byte into the register
+            // immediately.  Registers like DCR ($0F) and DVSSR ($13)
+            // have side effects (auto-SATB enable, DMA scheduling) that
+            // must fire on low-byte-only writes — games such as
+            // Bikkuriman World write DCR via ST1 without a following ST2.
             let existing = self.registers.get(index).copied().unwrap_or(0);
             let combined = (existing & 0xFF00) | value as u16;
             self.commit_register_write(index, combined);
@@ -4028,17 +4067,18 @@ impl Vdc {
             self.pending_write_register = None;
             return;
         }
-        let low = if use_latch {
-            self.latch_low
-        } else {
-            let index = self.selected_register() as usize;
-            self.registers
-                .get(index)
-                .copied()
-                .unwrap_or(0)
-                .to_le_bytes()[0]
-        };
-        let combined = u16::from_le_bytes([low, value]);
+        // Per-register data latch (MAME m_vdc_data): ST2 writes the high
+        // byte of the CURRENTLY SELECTED register, then commits the full
+        // 16-bit word.  The low byte was stored by the previous ST1 for
+        // this register and is NOT affected by intervening ST1 writes to
+        // other registers.
+        let index = self.selected_register() as usize;
+        if index < self.vdc_data.len() {
+            self.vdc_data[index] = (self.vdc_data[index] & 0x00FF) | ((value as u16) << 8);
+        }
+        let combined = self.vdc_data.get(index).copied().unwrap_or(
+            u16::from_le_bytes([self.latch_low, value])
+        );
         // Always use the CURRENT AR for the commit target — this matches
         // real HuC6270 behaviour where AR at ST2 time selects the register.
         let index = self.selected_register() as usize;
@@ -6046,13 +6086,16 @@ mod tests {
         vdc.write_data_low(0x34); // BXR low byte committed immediately → BXR = 0x0034
         // On real HuC6270, changing AR between ST1 and ST2 means the
         // high-byte commit targets the NEW register, not the old one.
+        // Per MAME, each register has its own data latch (m_vdc_data[]),
+        // so the low byte 0x34 stays in BXR's latch, NOT BYR's.
         vdc.write_select(0x08); // AR = BYR
-        vdc.write_data_high_direct(0x12); // commits (latch=0x34, hi=0x12)=0x1234 to BYR
+        vdc.write_data_high_direct(0x12); // commits vdc_data[8]=(0x12,0x00) to BYR
 
         // BXR only received the low-byte commit (0x0034).
         assert_eq!(vdc.registers[0x07], 0x0034);
-        // BYR received the full 16-bit value (masked to 9 bits).
-        assert_eq!(vdc.registers[0x08], 0x1234 & 0x01FF);
+        // BYR received (high=0x12, low=0x00 from its own latch), masked to 9 bits.
+        // The 0x34 from BXR's ST1 does NOT leak to BYR's data latch.
+        assert_eq!(vdc.registers[0x08], 0x1200 & 0x01FF);
     }
 
     #[test]
@@ -6547,11 +6590,15 @@ mod tests {
     fn hardware_page_psg_accesses_data_ports() {
         let mut bus = Bus::new();
         bus.set_mpr(0, 0xFF);
-        bus.write(PSG_ADDR_REG, 0x02);
-        bus.write(PSG_WRITE_REG, 0x7F);
-        bus.write(PSG_ADDR_REG, 0x02);
-        assert_eq!(bus.read(PSG_READ_REG), 0x7F);
-        assert_eq!(bus.read(PSG_STATUS_REG) & PSG_STATUS_IRQ, 0);
+        // Use the standard PSG address range ($0800-$0BFF) which is within
+        // the real I/O decode range.  The legacy $1C60 mirror is only
+        // reachable via write_io/read_io_internal (offsets $1800+ now fall
+        // through to ROM in the read path).
+        bus.write(0x0800, 0x02); // channel select = 2
+        bus.write(0x0805, 0x7F); // channel balance = 0x7F
+        bus.write(0x0800, 0x02); // re-select channel 2
+        assert_eq!(bus.read(0x0805), 0x7F);
+        assert_eq!(bus.psg.channels[2].balance, 0x7F);
     }
 
     #[test]

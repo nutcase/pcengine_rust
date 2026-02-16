@@ -1,4 +1,4 @@
-use crate::bus::{Bus, IRQ_REQUEST_IRQ1, IRQ_REQUEST_IRQ2, IRQ_REQUEST_TIMER};
+use crate::bus::{Bus, IRQ_REQUEST_IRQ1, IRQ_REQUEST_TIMER};
 
 pub const FLAG_CARRY: u8 = 0b0000_0001;
 pub const FLAG_ZERO: u8 = 0b0000_0010;
@@ -172,14 +172,13 @@ impl Cpu {
             && (!self.get_flag(FLAG_INTERRUPT_DISABLE) || self.waiting)
         {
             self.irq_pending = false;
-            let source = if let Some(mask) = bus.next_irq() {
+            if let Some(mask) = bus.next_irq() {
                 bus.acknowledge_irq(mask);
-                mask
-            } else {
-                IRQ_REQUEST_IRQ2
-            };
-            let vector_slot = Self::vector_slot_for_irq_source(bus, source);
-            return self.handle_interrupt(bus, vector_slot, false) as u32;
+                let vector_slot = Self::vector_slot_for_irq_source(bus, mask);
+                return self.handle_interrupt(bus, vector_slot, false) as u32;
+            }
+            // No actual IRQ source on the bus — the latched irq_pending was
+            // stale (already serviced).  Fall through to normal execution.
         }
 
         if self.waiting {
