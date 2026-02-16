@@ -5,3 +5,4 @@ docs/
 *.png
 *.ppm
 *.pce
+*.state
