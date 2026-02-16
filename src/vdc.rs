@@ -114,48 +114,7 @@ pub(crate) struct Vdc {
     pub(crate) scroll_line_valid: [bool; LINES_PER_FRAME as usize],
     pub(crate) vram_dma_request: bool,
     pub(crate) cram_pending: bool,
-    pub(crate) cram_dma_count: u64,
-    pub(crate) control_write_count: u64,
-    pub(crate) last_control_value: u16,
     pub(crate) render_control_latch: u16,
-    pub(crate) last_cram_source: u16,
-    pub(crate) last_cram_length: u16,
-    pub(crate) vram_dma_count: u64,
-    pub(crate) last_vram_dma_source: u16,
-    pub(crate) last_vram_dma_destination: u16,
-    pub(crate) last_vram_dma_length: u16,
-    pub(crate) dcr_write_count: u64,
-    pub(crate) last_dcr_value: u8,
-    pub(crate) register_write_counts: [u64; VDC_REGISTER_COUNT],
-    pub(crate) register_select_counts: [u64; VDC_REGISTER_COUNT],
-    pub(crate) r05_low_writes: u64,
-    pub(crate) r05_high_writes: u64,
-    pub(crate) last_r05_low: u8,
-    pub(crate) r05_low_value_counts: [u64; 0x100],
-    pub(crate) r05_high_value_counts: [u64; 0x100],
-    pub(crate) vram_data_low_writes: u64,
-    pub(crate) vram_data_high_writes: u64,
-    pub(crate) vram_data_high_without_low: u64,
-    /// Track writes to a specific VRAM address range (for debugging font loading).
-    pub(crate) vram_write_range_count: u64,
-    pub(crate) vram_write_range_start: u16,
-    pub(crate) vram_write_range_end: u16,
-    /// Debug: log MAWR register set operations in a specified range.
-    pub(crate) mawr_log: Vec<u16>,
-    pub(crate) mawr_log_start: u16,
-    pub(crate) mawr_log_end: u16,
-    /// Debug: log the first N VRAM writes (address, value).
-    pub(crate) vram_write_log: Vec<(u16, u16)>,
-    pub(crate) vram_write_log_limit: usize,
-    /// Debug: log BYR/RCR/CR writes with scanline. (scanline, reg_index, value)
-    pub(crate) reg_trace: Vec<(u16, u8, u16)>,
-    pub(crate) reg_trace_enabled: bool,
-    /// BIOS font tile patterns: 96 tiles (ASCII 0x20-0x7F), 16 VRAM words each.
-    /// Stored separately so they can be restored when game graphics overwrites them.
-    pub(crate) bios_font_tiles: Vec<[u16; 16]>,
-    /// Set when VRAM writes hit the font tile area, signalling that font tiles
-    /// may need restoration before the next render.
-    pub(crate) bios_font_dirty: bool,
     pub(crate) ignore_next_high_byte: bool,
     // Remember which register a low byte targeted so the paired high byte
     // commits to the same register even if ST0 is touched in between.
@@ -257,40 +216,7 @@ impl Vdc {
             scroll_line_valid: [false; LINES_PER_FRAME as usize],
             vram_dma_request: false,
             cram_pending: false,
-            cram_dma_count: 0,
-            control_write_count: 0,
-            last_control_value: 0,
             render_control_latch: 0,
-            last_cram_source: 0,
-            last_cram_length: 0,
-            vram_dma_count: 0,
-            last_vram_dma_source: 0,
-            last_vram_dma_destination: 0,
-            last_vram_dma_length: 0,
-            dcr_write_count: 0,
-            last_dcr_value: 0,
-            register_write_counts: [0; VDC_REGISTER_COUNT],
-            register_select_counts: [0; VDC_REGISTER_COUNT],
-            r05_low_writes: 0,
-            r05_high_writes: 0,
-            last_r05_low: 0,
-            r05_low_value_counts: [0; 0x100],
-            r05_high_value_counts: [0; 0x100],
-            vram_data_low_writes: 0,
-            vram_data_high_writes: 0,
-            vram_data_high_without_low: 0,
-            vram_write_range_count: 0,
-            vram_write_range_start: 0,
-            vram_write_range_end: 0,
-            mawr_log: Vec::new(),
-            mawr_log_start: 0,
-            mawr_log_end: 0,
-            vram_write_log: Vec::new(),
-            vram_write_log_limit: 0,
-            reg_trace: Vec::new(),
-            reg_trace_enabled: false,
-            bios_font_tiles: Vec::new(),
-            bios_font_dirty: false,
             ignore_next_high_byte: false,
             pending_write_register: None,
             #[cfg(feature = "trace_hw_writes")]
@@ -306,7 +232,6 @@ impl Vdc {
         };
         vdc.registers[0x04] = VDC_CTRL_ENABLE_BACKGROUND_LEGACY | VDC_CTRL_ENABLE_SPRITES_LEGACY;
         vdc.registers[0x05] = vdc.registers[0x04];
-        vdc.last_control_value = vdc.registers[0x04];
         vdc.render_control_latch = vdc.registers[0x04];
         vdc.registers[0x09] = 0x0010; // default to 64x32 virtual map
         vdc.registers[0x0A] = 0x0010;
@@ -373,34 +298,9 @@ impl Vdc {
         self.scroll_line_valid = [false; LINES_PER_FRAME as usize];
         self.vram_dma_request = false;
         self.cram_pending = false;
-        self.cram_dma_count = 0;
-        self.control_write_count = 0;
         self.registers[0x04] = VDC_CTRL_ENABLE_BACKGROUND_LEGACY | VDC_CTRL_ENABLE_SPRITES_LEGACY;
         self.registers[0x05] = self.registers[0x04];
-        self.last_control_value = self.registers[0x04];
         self.render_control_latch = self.registers[0x04];
-        self.last_cram_source = 0;
-        self.last_cram_length = 0;
-        self.vram_dma_count = 0;
-        self.last_vram_dma_source = 0;
-        self.last_vram_dma_destination = 0;
-        self.last_vram_dma_length = 0;
-        self.dcr_write_count = 0;
-        self.last_dcr_value = 0;
-        self.register_write_counts = [0; VDC_REGISTER_COUNT];
-        self.register_select_counts = [0; VDC_REGISTER_COUNT];
-        self.r05_low_writes = 0;
-        self.r05_high_writes = 0;
-        self.last_r05_low = 0;
-        self.r05_low_value_counts = [0; 0x100];
-        self.r05_high_value_counts = [0; 0x100];
-        self.vram_data_low_writes = 0;
-        self.vram_data_high_writes = 0;
-        self.vram_data_high_without_low = 0;
-        self.vram_write_range_count = 0;
-        self.mawr_log.clear();
-        self.vram_write_log.clear();
-        self.vram_write_log_limit = 0;
         self.pending_write_register = None;
         self.registers[0x0A] = 0x0010;
         self.registers[0x0B] = 0x0010;
@@ -432,46 +332,6 @@ impl Vdc {
 
     pub(crate) fn status_bits(&self) -> u8 {
         self.status
-    }
-
-    pub(crate) fn control_write_count(&self) -> u64 {
-        self.control_write_count
-    }
-
-    pub(crate) fn last_control_value(&self) -> u16 {
-        self.last_control_value
-    }
-
-    pub(crate) fn r05_low_writes(&self) -> u64 {
-        self.r05_low_writes
-    }
-
-    pub(crate) fn r05_high_writes(&self) -> u64 {
-        self.r05_high_writes
-    }
-
-    pub(crate) fn last_r05_low(&self) -> u8 {
-        self.last_r05_low
-    }
-
-    pub(crate) fn r05_low_value_counts(&self) -> &[u64; 0x100] {
-        &self.r05_low_value_counts
-    }
-
-    pub(crate) fn r05_high_value_counts(&self) -> &[u64; 0x100] {
-        &self.r05_high_value_counts
-    }
-
-    pub(crate) fn vram_data_low_writes(&self) -> u64 {
-        self.vram_data_low_writes
-    }
-
-    pub(crate) fn vram_data_high_writes(&self) -> u64 {
-        self.vram_data_high_writes
-    }
-
-    pub(crate) fn vram_data_high_without_low(&self) -> u64 {
-        self.vram_data_high_without_low
     }
 
     pub(crate) fn satb_pending(&self) -> bool {
@@ -830,14 +690,6 @@ impl Vdc {
         self.registers.get(index).copied()
     }
 
-    pub(crate) fn register_write_count(&self, index: usize) -> u64 {
-        self.register_write_counts.get(index).copied().unwrap_or(0)
-    }
-
-    pub(crate) fn register_select_count(&self, index: usize) -> u64 {
-        self.register_select_counts.get(index).copied().unwrap_or(0)
-    }
-
     pub(crate) fn write_select(&mut self, value: u8) {
         let new_sel = value & 0x1F;
         // Keep the low-byte target latched across ST0 writes until the paired
@@ -852,10 +704,6 @@ impl Vdc {
         self.selected = new_sel;
         self.write_phase = VdcWritePhase::Low;
         self.ignore_next_high_byte = false;
-        let index = self.map_register_index(self.selected) as usize;
-        if let Some(count) = self.register_select_counts.get_mut(index) {
-            *count = count.saturating_add(1);
-        }
         #[cfg(feature = "trace_hw_writes")]
         eprintln!(
             "  VDC select {:02X} pending={:?} phase={:?}",
@@ -877,16 +725,6 @@ impl Vdc {
             self.vdc_data[index] = (self.vdc_data[index] & 0xFF00) | value as u16;
         }
 
-        if self.pending_write_register == Some(0x02) {
-            self.vram_data_low_writes = self.vram_data_low_writes.saturating_add(1);
-        }
-        if matches!(self.selected_register(), 0x04 | 0x05) {
-            self.r05_low_writes = self.r05_low_writes.saturating_add(1);
-            self.last_r05_low = value;
-            if let Some(slot) = self.r05_low_value_counts.get_mut(value as usize) {
-                *slot = slot.saturating_add(1);
-            }
-        }
         #[cfg(feature = "trace_hw_writes")]
         {
             let reg = self.selected_register();
@@ -954,22 +792,10 @@ impl Vdc {
         // real HuC6270 behaviour where AR at ST2 time selects the register.
         let index = self.selected_register() as usize;
         self.pending_write_register = None;
-        if index == 0x02 {
-            self.vram_data_high_writes = self.vram_data_high_writes.saturating_add(1);
-            if !use_latch {
-                self.vram_data_high_without_low = self.vram_data_high_without_low.saturating_add(1);
-            }
-        }
         self.st0_locked_until_commit = false;
         #[cfg(feature = "trace_hw_writes")]
         {
             self.st0_hold_counter = 0;
-        }
-        if index == 0x04 || index == 0x05 {
-            self.r05_high_writes = self.r05_high_writes.saturating_add(1);
-            if let Some(slot) = self.r05_high_value_counts.get_mut(value as usize) {
-                *slot = slot.saturating_add(1);
-            }
         }
         #[cfg(feature = "trace_hw_writes")]
         {
@@ -1034,9 +860,6 @@ impl Vdc {
                 eprintln!("  TRACE R05 commit {:04X}", combined);
             }
         }
-        if self.reg_trace_enabled && matches!(index, 0x05 | 0x06 | 0x07 | 0x08) {
-            self.reg_trace.push((self.scanline, index as u8, combined));
-        }
         if index < self.registers.len() {
             let stored = if matches!(index, 0x00 | 0x01) {
                 combined & 0x7FFF
@@ -1044,18 +867,11 @@ impl Vdc {
                 combined
             };
             self.registers[index] = stored;
-            if let Some(count) = self.register_write_counts.get_mut(index) {
-                *count = count.saturating_add(1);
-            }
         }
         match index {
             0x00 => {
                 self.mawr = combined & 0x7FFF;
                 self.registers[0x00] = self.mawr;
-                // MAWR log
-                if self.mawr >= self.mawr_log_start && self.mawr < self.mawr_log_end {
-                    self.mawr_log.push(self.mawr);
-                }
             }
             0x01 => {
                 self.marr = combined & 0x7FFF;
@@ -1068,8 +884,6 @@ impl Vdc {
                 // Mirror control into both slots so legacy/tests remain stable.
                 self.registers[0x04] = combined;
                 self.registers[0x05] = combined;
-                self.control_write_count = self.control_write_count.saturating_add(1);
-                self.last_control_value = combined;
                 if combined != 0 {
                     self.render_control_latch = combined;
                 }
@@ -1117,14 +931,11 @@ impl Vdc {
     #[allow(dead_code)] // Internal utility; not triggered by standard HuC6270 registers.
     pub(crate) fn schedule_cram_dma(&mut self) {
         self.cram_pending = true;
-        self.cram_dma_count += 1;
-        self.last_cram_source = self.marr & 0x7FFF;
-        self.last_cram_length = self.registers[0x12];
         #[cfg(feature = "trace_hw_writes")]
         eprintln!(
             "  VDC CRAM DMA scheduled (pending len {:04X}) source {:04X} (MAWR {:04X})",
             self.registers[0x12],
-            self.last_cram_source,
+            self.marr & 0x7FFF,
             self.marr & 0x7FFF
         );
     }
@@ -1212,25 +1023,12 @@ impl Vdc {
     pub(crate) fn write_vram(&mut self, value: u16) {
         let addr = self.mawr & 0x7FFF;
 
-        // Debug: range tracking and write log (always record, even if latched)
-        if addr >= self.vram_write_range_start && addr < self.vram_write_range_end {
-            self.vram_write_range_count = self.vram_write_range_count.saturating_add(1);
-        }
-        if self.vram_write_log.len() < self.vram_write_log_limit {
-            self.vram_write_log.push((addr, value));
-        }
         #[cfg(feature = "trace_hw_writes")]
         eprintln!("    VRAM[{:04X}] = {:04X}", addr, value);
 
         let idx = addr as usize;
         if let Some(slot) = self.vram.get_mut(idx) {
             *slot = value;
-        }
-        // Mark BIOS font as dirty if the write hits the font tile area
-        if !self.bios_font_dirty && !self.bios_font_tiles.is_empty() {
-            if addr >= 0x1200 && addr < 0x1800 {
-                self.bios_font_dirty = true;
-            }
         }
         self.set_busy(VDC_BUSY_ACCESS_CYCLES);
 

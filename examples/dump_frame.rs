@@ -82,28 +82,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     emulator.bus.vdc_register(0x05).unwrap_or(0),
                     emulator.bus.vdc_map_dimensions()
                 );
-                println!(
-                    "VDC control writes: {} (last {:#06X})",
-                    emulator.bus.vdc_control_write_count(),
-                    emulator.bus.vdc_last_control()
-                );
                 println!("VDC status: {:#04X}", emulator.bus.vdc_status_bits());
                 println!(
                     "SATB pending: {} source: {:#06X}",
                     emulator.bus.vdc_satb_pending(),
                     emulator.bus.vdc_satb_source()
-                );
-                println!(
-                    "CRAM DMA last src: {:#06X} len: {:#06X}",
-                    emulator.bus.vdc_cram_last_source(),
-                    emulator.bus.vdc_cram_last_length()
-                );
-                println!(
-                    "VRAM DMA count: {} last src: {:#06X} dst: {:#06X} len: {:#06X}",
-                    emulator.bus.vdc_vram_dma_count(),
-                    emulator.bus.vdc_vram_last_source(),
-                    emulator.bus.vdc_vram_last_destination(),
-                    emulator.bus.vdc_vram_last_length()
                 );
                 // Dump BAT rows in the text area for debugging
                 let (map_w, map_h) = emulator.bus.vdc_map_dimensions();

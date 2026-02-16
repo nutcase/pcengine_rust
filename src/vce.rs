@@ -6,7 +6,6 @@ pub(crate) struct Vce {
     data_latch: u16,
     write_phase: VcePhase,
     read_phase: VcePhase,
-    data_high_without_low: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, bincode::Encode, bincode::Decode)]
@@ -24,7 +23,6 @@ impl Vce {
             data_latch: 0,
             write_phase: VcePhase::Low,
             read_phase: VcePhase::Low,
-            data_high_without_low: 0,
         }
     }
 
@@ -35,7 +33,6 @@ impl Vce {
         self.data_latch = 0;
         self.write_phase = VcePhase::Low;
         self.read_phase = VcePhase::Low;
-        self.data_high_without_low = 0;
     }
 
     fn index(&self) -> usize {
@@ -193,7 +190,4 @@ impl Vce {
         ((r as u32) << 16) | ((g as u32) << 8) | b as u32
     }
 
-    pub(crate) fn data_high_without_low(&self) -> u64 {
-        self.data_high_without_low
-    }
 }

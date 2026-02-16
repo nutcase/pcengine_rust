@@ -40,12 +40,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let vdc_select_values_snapshot = *emulator.bus.vdc_select_value_counts();
-    let vdc_register_select_snapshot = *emulator.bus.vdc_register_select_counts();
-    let vdc_register_write_snapshot = *emulator.bus.vdc_register_write_counts();
-    let vdc_r05_low_values_snapshot = *emulator.bus.vdc_r05_low_value_counts();
-    let vdc_r05_high_values_snapshot = *emulator.bus.vdc_r05_high_value_counts();
-
     let (nonzero, unique) = vram_stats(&mut emulator.bus);
     let (vram_lo_nonzero, vram_hi_nonzero) = vram_byte_plane_stats(&mut emulator.bus);
 
@@ -104,9 +98,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         emulator.cpu.pc, emulator.cpu.sp
     );
     println!(
-        "vdc control: {:04X} brightness: {:X}",
-        emulator.bus.vdc_register(0x05).unwrap_or(0),
-        emulator.bus.vce_last_control_high() >> 4
+        "vdc control: {:04X}",
+        emulator.bus.vdc_register(0x05).unwrap_or(0)
     );
     println!(
         "mpr (boot): {}",
@@ -127,14 +120,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             .join(" ")
     );
     println!(
-        "vdc control writes: {} last value: {:04X}",
-        emulator.bus.vdc_control_write_count(),
-        emulator.bus.vdc_last_control()
-    );
-    println!(
-        "vdc dcr writes: {} last value: {:02X}",
-        emulator.bus.vdc_dcr_write_count(),
-        emulator.bus.vdc_last_dcr_value()
+        "vdc control: {:04X}",
+        emulator.bus.vdc_register(0x05).unwrap_or(0)
     );
     let mut scroll_counts: BTreeMap<(u16, u16), usize> = BTreeMap::new();
     let mut valid_scroll_lines = 0usize;
@@ -260,95 +247,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("vdc R{idx:02X} = {:04X}", value);
         }
     }
-    for (label, index) in [
-        ("R04", 0x04usize),
-        ("R05", 0x05usize),
-        ("R0C", 0x0Cusize),
-        ("R0F", 0x0Fusize),
-        ("R10", 0x10usize),
-        ("R11", 0x11usize),
-        ("R12", 0x12usize),
-        ("R13", 0x13usize),
-    ] {
-        println!(
-            "vdc {label} writes: {} selects: {}",
-            vdc_register_write_snapshot[index], vdc_register_select_snapshot[index]
-        );
-    }
-    println!(
-        "vdc R05 data writes: low {} high {}",
-        emulator.bus.vdc_r05_low_writes(),
-        emulator.bus.vdc_r05_high_writes()
-    );
-    println!(
-        "vdc R02 data writes: low {} high {} high_without_low {}",
-        emulator.bus.vdc_vram_data_low_writes(),
-        emulator.bus.vdc_vram_data_high_writes(),
-        emulator.bus.vdc_vram_data_high_without_low()
-    );
-    println!(
-        "vdc R05 last low byte: {:02X}",
-        emulator.bus.vdc_last_r05_low()
-    );
-    print_top_byte_counts("vdc R05 low values", &vdc_r05_low_values_snapshot, 8);
-    print_top_byte_counts("vdc R05 high values", &vdc_r05_high_values_snapshot, 8);
-    println!("top IO writes:");
-    for (addr, count) in emulator.bus.io_write_hist_top(10) {
-        println!("  {:04X}: {}", addr, count);
-    }
-    print!("vdc selector values:");
-    for (value, count) in vdc_select_values_snapshot.iter().enumerate() {
-        if *count > 0 {
-            print!(" {:02X}={}", value, count);
-        }
-    }
-    println!();
-    // Summaries of which registers were touched during the run.
-    print!("vdc select counts:");
-    for (i, cnt) in vdc_register_select_snapshot.iter().enumerate() {
-        if *cnt > 0 {
-            print!(" R{:02X}={}", i, cnt);
-        }
-    }
-    println!();
-
-    print!("vdc write counts :");
-    for (i, cnt) in vdc_register_write_snapshot.iter().enumerate() {
-        if *cnt > 0 {
-            print!(" R{:02X}={}", i, cnt);
-        }
-    }
-    println!();
-    let alias_counts = emulator.bus.vdc_alias_write_counts();
-    let mut alias_stats: Vec<(usize, u64)> = alias_counts
-        .iter()
-        .enumerate()
-        .filter_map(|(slot, &count)| if count > 0 { Some((slot, count)) } else { None })
-        .collect();
-    if !alias_stats.is_empty() {
-        alias_stats.sort_by(|a, b| b.1.cmp(&a.1));
-        print!("vdc alias writes:");
-        for (slot, count) in alias_stats.iter().take(8) {
-            print!(" {:02X}:{count}", slot);
-        }
-        println!();
-    }
     println!(
         "mawr {:04X} marr {:04X}",
         emulator.bus.vdc_register(0x00).unwrap_or(0),
         emulator.bus.vdc_register(0x01).unwrap_or(0)
-    );
-    println!(
-        "cram dma last src {:04X} len {:04X}",
-        emulator.bus.vdc_cram_last_source(),
-        emulator.bus.vdc_cram_last_length()
-    );
-    println!(
-        "vram dma count {} last src {:04X} dst {:04X} len {:04X}",
-        emulator.bus.vdc_vram_dma_count(),
-        emulator.bus.vdc_vram_last_source(),
-        emulator.bus.vdc_vram_last_destination(),
-        emulator.bus.vdc_vram_last_length()
     );
     println!(
         "satb pending {} source {:04X}",
@@ -421,16 +323,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         emulator.bus.vdc_register(0x12).unwrap_or(0)
     );
 
-    let cram_src = emulator.bus.vdc_cram_last_source();
-    if cram_src != 0 {
-        print!("VRAM[{cram_src:04X}] ->");
-        for offset in 0..8u16 {
-            let addr = cram_src.wrapping_add(offset);
-            let word = read_vram_word(&mut emulator.bus, addr);
-            print!(" {word:04X}");
-        }
-        println!();
-    }
     let palette_vram_base = 0x0500u16;
     print!("VRAM[{palette_vram_base:04X}] ->");
     for offset in 0..8u16 {
@@ -480,31 +372,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         println!();
     }
-
-    println!(
-        "VCE writes observed: {} (data writes: {})",
-        emulator.bus.vce_write_count(),
-        emulator.bus.vce_data_write_count()
-    );
-    println!(
-        "VCE data high_without_low: {}",
-        emulator.bus.vce_data_high_without_low()
-    );
-    println!(
-        "VCE control writes: {}",
-        emulator.bus.vce_control_write_count()
-    );
-    println!("VCE port hits: {}", emulator.bus.vce_port_hit_count());
-    println!("CRAM DMA scheduled: {}", emulator.bus.cram_dma_count());
-    println!(
-        "Last VCE port addr: {:04X}",
-        emulator.bus.vce_last_port_addr()
-    );
-    println!(
-        "Last VCE control high: {:02X} (max {:02X})",
-        emulator.bus.vce_last_control_high(),
-        emulator.bus.vce_last_control_high_max()
-    );
 
     Ok(())
 }
@@ -562,30 +429,6 @@ fn palette_stats(bus: &mut Bus) -> usize {
         }
     }
     count
-}
-
-fn print_top_byte_counts(label: &str, counts: &[u64; 0x100], limit: usize) {
-    let mut stats: Vec<(usize, u64)> = counts
-        .iter()
-        .enumerate()
-        .filter_map(|(value, &count)| {
-            if count > 0 {
-                Some((value, count))
-            } else {
-                None
-            }
-        })
-        .collect();
-    if stats.is_empty() {
-        println!("{label}: <none>");
-        return;
-    }
-    stats.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    print!("{label}:");
-    for (value, count) in stats.into_iter().take(limit) {
-        print!(" {:02X}={}", value, count);
-    }
-    println!();
 }
 
 fn print_bat_row_nonzero_with_stride(bus: &Bus, width: usize, height: usize, rows: usize) {

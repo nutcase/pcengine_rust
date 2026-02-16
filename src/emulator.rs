@@ -190,7 +190,6 @@ impl Emulator {
         self.cpu.reset(&mut self.bus);
         self.seed_cpu_stack();
         self.load_bios_font();
-        self.bus.store_bios_font();
         self.cycles = 0;
     }
 

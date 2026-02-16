@@ -72,8 +72,5 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("  (no changes)");
     }
 
-    // Also check total VCE write count during the frame
-    println!("\nVCE data writes in frame: {}", emu.bus.vce_data_write_count());
-
     Ok(())
 }

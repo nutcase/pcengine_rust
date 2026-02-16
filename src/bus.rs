@@ -2,7 +2,7 @@ use crate::psg::Psg;
 use crate::vce::Vce;
 use crate::vdc::{
     Vdc,
-    VDC_REGISTER_COUNT, FRAME_WIDTH, FRAME_HEIGHT,
+    FRAME_WIDTH, FRAME_HEIGHT,
     VDC_DMA_WORD_CYCLES,
     TILE_WIDTH, TILE_HEIGHT, SPRITE_PATTERN_WIDTH, SPRITE_PATTERN_HEIGHT,
     SPRITE_PATTERN_WORDS, SPRITE_COUNT,
@@ -466,17 +466,6 @@ pub struct Bus {
     bg_opaque: Vec<bool>,
     bg_priority: Vec<bool>,
     sprite_line_counts: Vec<u8>,
-    io_write_hist: std::collections::HashMap<u16, u64>,
-    vce_write_count: u64,
-    vce_data_writes: u64,
-    vce_control_writes: u64,
-    vce_port_hits: u64,
-    cram_dma_count: u64,
-    vce_last_port_addr: u16,
-    vce_last_control_high: u8,
-    vce_last_control_high_max: u8,
-    vdc_alias_write_counts: [u64; 0x20],
-    vdc_select_value_counts: [u64; 0x20],
     #[cfg(feature = "trace_hw_writes")]
     last_pc_for_trace: Option<u16>,
     #[cfg(debug_assertions)]
@@ -680,23 +669,12 @@ impl Bus {
             bg_opaque: vec![false; FRAME_WIDTH * FRAME_HEIGHT],
             bg_priority: vec![false; FRAME_WIDTH * FRAME_HEIGHT],
             sprite_line_counts: vec![0; FRAME_HEIGHT],
-            vce_write_count: 0,
-            vce_data_writes: 0,
-            vce_control_writes: 0,
-            vce_port_hits: 0,
-            cram_dma_count: 0,
-            vce_last_port_addr: 0,
-            vce_last_control_high: 0,
-            vce_last_control_high_max: 0,
-            vdc_alias_write_counts: [0; 0x20],
-            vdc_select_value_counts: [0; 0x20],
             #[cfg(feature = "trace_hw_writes")]
             last_pc_for_trace: None,
             #[cfg(debug_assertions)]
             debug_force_ds_after: 0,
             #[cfg(feature = "trace_hw_writes")]
             st0_lock_window: 0,
-            io_write_hist: std::collections::HashMap::new(),
         };
 
         // Power-on mapping: expose internal RAM in bank 0 for ZP/stack and
@@ -829,16 +807,12 @@ impl Bus {
         if (matches!(mapping, BankMapping::Hardware) || Self::env_extreme_mirror())
             && (0x0400..=0x07FF).contains(&mirrored)
         {
-            self.vce_port_hits = self.vce_port_hits.saturating_add(1);
-            self.vce_last_port_addr = addr;
             self.write_vce_port(mirrored as u16, value);
             self.refresh_vdc_irq();
             return;
         }
         // Catch-all debug: force any <0x4000 write to go to VCE ports (decode A2..A0).
         if Self::env_vce_catchall() && (addr as usize) < 0x4000 {
-            self.vce_port_hits = self.vce_port_hits.saturating_add(1);
-            self.vce_last_port_addr = addr;
             self.write_vce_port(addr as u16, value);
             self.refresh_vdc_irq();
             return;
@@ -870,7 +844,7 @@ impl Bus {
                         }
                     }
                 }
-                self.record_io_write(offset as u16);
+
                 self.refresh_vdc_irq();
                 return;
             }
@@ -911,7 +885,7 @@ impl Bus {
                         eprintln!("  HW write offset {:04X} -> {:02X}", io_offset, value);
                     }
                 }
-                self.record_io_write(io_offset as u16);
+
                 self.refresh_vdc_irq();
             }
             BankMapping::Rom { .. } => {}
@@ -959,15 +933,6 @@ impl Bus {
         self.bg_priority.fill(false);
         self.sprite_line_counts.fill(0);
         self.vdc.clear_sprite_overflow();
-        self.vce_write_count = 0;
-        self.vce_data_writes = 0;
-        self.vce_port_hits = 0;
-        self.cram_dma_count = 0;
-        self.vce_last_port_addr = 0;
-        self.vce_last_control_high = 0;
-        self.vdc_alias_write_counts = [0; 0x20];
-        self.vdc_select_value_counts = [0; 0x20];
-        self.io_write_hist.clear();
         #[cfg(debug_assertions)]
         {
             self.debug_force_ds_after = 0;
@@ -985,7 +950,6 @@ impl Bus {
         for idx in 0..NUM_BANKS {
             self.update_mpr(idx);
         }
-        self.io_write_hist.clear();
     }
 
     pub fn map_bank_to_ram(&mut self, bank: usize, page: usize) {
@@ -1045,7 +1009,7 @@ impl Bus {
             *slot = value;
         }
         #[cfg(feature = "trace_hw_writes")]
-        if Self::env_trace_mpr() && self.vce_port_hits < 1000 {
+        if Self::env_trace_mpr() {
             use std::fmt::Write as _;
             let mut m = String::new();
             for (i, val) in self.mpr.iter().enumerate() {
@@ -1066,10 +1030,6 @@ impl Bus {
         );
         match port {
             0 => {
-                let sel = (value & 0x1F) as usize;
-                if let Some(slot) = self.vdc_select_value_counts.get_mut(sel) {
-                    *slot = slot.saturating_add(1);
-                }
                 #[cfg(feature = "trace_hw_writes")]
                 if !Self::st0_hold_enabled() {
                     self.vdc.st0_hold_counter = 0;
@@ -1214,79 +1174,6 @@ impl Bus {
         let idx = (addr as usize) & 0x7FFF;
         if let Some(slot) = self.vdc.vram.get_mut(idx) {
             *slot = value;
-        }
-    }
-
-    /// Store the BIOS font tile patterns from VRAM into a separate buffer.
-    /// Call this after `load_bios_font()` to snapshot the font data.
-    pub fn store_bios_font(&mut self) {
-        let mut tiles = Vec::with_capacity(96);
-        for i in 0..96usize {
-            let tile_id = 0x100 + 0x20 + i;
-            let base = tile_id * 16;
-            let mut words = [0u16; 16];
-            for w in 0..16 {
-                let idx = (base + w) & 0x7FFF;
-                words[w] = self.vdc.vram[idx];
-            }
-            tiles.push(words);
-        }
-        self.vdc.bios_font_tiles = tiles;
-        self.vdc.bios_font_dirty = false;
-    }
-
-    /// Clear the stored BIOS font snapshot so restore does nothing.
-    pub fn vdc_clear_bios_font_store(&mut self) {
-        self.vdc.bios_font_tiles.clear();
-    }
-
-    /// Restore BIOS font tiles that are referenced by active BAT entries.
-    /// Only restores tiles whose VRAM data has been overwritten (differs from
-    /// the stored font patterns). This emulates the BIOS's on-demand font
-    /// loading that would happen when games call text output functions.
-    pub fn restore_bios_font_tiles(&mut self) {
-        if self.vdc.bios_font_tiles.is_empty() {
-            return;
-        }
-
-        // Determine BAT size from map dimensions.
-        let mwr = self.vdc.registers[0x09];
-        let width_code = ((mwr >> 4) & 0x03) as usize;
-        let height_code = ((mwr >> 6) & 0x01) as usize;
-        let map_w = match width_code {
-            0 => 32,
-            1 => 64,
-            _ => 128,
-        };
-        let map_h = if height_code == 0 { 32 } else { 64 };
-        let bat_size = map_w * map_h;
-
-        // Collect unique font tile IDs referenced by BAT entries.
-        let mut need_restore = [false; 96]; // indexed by (tile_id - 0x120)
-        for bat_idx in 0..bat_size {
-            let entry = self.vdc.vram[bat_idx & 0x7FFF];
-            let tile_id = (entry & 0x07FF) as usize;
-            if tile_id >= 0x120 && tile_id < 0x180 {
-                need_restore[tile_id - 0x120] = true;
-            }
-        }
-
-        // Restore font tiles whose VRAM data differs from stored patterns.
-        for i in 0..96usize {
-            if !need_restore[i] {
-                continue;
-            }
-            let tile_id = 0x120 + i;
-            let base = tile_id * 16;
-            let stored = &self.vdc.bios_font_tiles[i];
-            // Only write if data actually differs (avoid unnecessary writes).
-            let differs = (0..16).any(|w| self.vdc.vram[(base + w) & 0x7FFF] != stored[w]);
-            if differs {
-                for w in 0..16 {
-                    let idx = (base + w) & 0x7FFF;
-                    self.vdc.vram[idx] = stored[w];
-                }
-            }
         }
     }
 
@@ -1506,7 +1393,6 @@ impl Bus {
             | VDC_CTRL_ENABLE_SPRITES;
         self.vdc.registers[0x04] = ctrl;
         self.vdc.registers[0x05] = ctrl;
-        self.vdc.last_control_value = ctrl;
         self.vdc
             .raise_status(VDC_STATUS_DS | VDC_STATUS_DV | VDC_STATUS_VBL);
         // Map size 64x32, base 0
@@ -1542,18 +1428,6 @@ impl Bus {
         self.vdc.satb[2] = 0; // pattern/cg
         self.vdc.satb[3] = 0; // attr
         self.frame_ready = true;
-    }
-
-    fn record_io_write(&mut self, offset: u16) {
-        use std::collections::hash_map::Entry;
-        match self.io_write_hist.entry(offset) {
-            Entry::Vacant(v) => {
-                v.insert(1);
-            }
-            Entry::Occupied(mut o) => {
-                *o.get_mut() = o.get().saturating_add(1);
-            }
-        }
     }
 
     pub fn framebuffer(&self) -> &[u32] {
@@ -1605,131 +1479,6 @@ impl Bus {
 
     pub fn display_y_offset(&self) -> usize {
         self.current_display_y_offset
-    }
-
-    pub fn io_write_hist_top(&self, limit: usize) -> Vec<(u16, u64)> {
-        let mut entries: Vec<(u16, u64)> =
-            self.io_write_hist.iter().map(|(k, v)| (*k, *v)).collect();
-        entries.sort_by(|a, b| b.1.cmp(&a.1));
-        entries.truncate(limit);
-        entries
-    }
-
-    pub fn vce_write_count(&self) -> u64 {
-        self.vce_write_count
-    }
-
-    pub fn vce_data_write_count(&self) -> u64 {
-        self.vce_data_writes
-    }
-
-    pub fn vce_control_write_count(&self) -> u64 {
-        self.vce_control_writes
-    }
-
-    pub fn vce_port_hit_count(&self) -> u64 {
-        self.vce_port_hits
-    }
-
-    pub fn cram_dma_count(&self) -> u64 {
-        self.vdc.cram_dma_count
-    }
-
-    pub fn vce_last_port_addr(&self) -> u16 {
-        self.vce_last_port_addr
-    }
-
-    pub fn vce_last_control_high(&self) -> u8 {
-        self.vce_last_control_high
-    }
-
-    pub fn vce_last_control_high_max(&self) -> u8 {
-        self.vce_last_control_high_max
-    }
-
-    pub fn vce_data_high_without_low(&self) -> u64 {
-        self.vce.data_high_without_low()
-    }
-
-    pub fn vdc_alias_write_counts(&self) -> &[u64; 0x20] {
-        &self.vdc_alias_write_counts
-    }
-
-    pub fn vdc_select_value_counts(&self) -> &[u64; 0x20] {
-        &self.vdc_select_value_counts
-    }
-
-    pub fn vdc_r05_low_writes(&self) -> u64 {
-        self.vdc.r05_low_writes()
-    }
-
-    pub fn vdc_r05_high_writes(&self) -> u64 {
-        self.vdc.r05_high_writes()
-    }
-
-    pub fn vdc_last_r05_low(&self) -> u8 {
-        self.vdc.last_r05_low()
-    }
-
-    pub fn vdc_r05_low_value_counts(&self) -> &[u64; 0x100] {
-        self.vdc.r05_low_value_counts()
-    }
-
-    pub fn vdc_r05_high_value_counts(&self) -> &[u64; 0x100] {
-        self.vdc.r05_high_value_counts()
-    }
-
-    pub fn vdc_vram_data_low_writes(&self) -> u64 {
-        self.vdc.vram_data_low_writes()
-    }
-
-    pub fn vdc_vram_data_high_writes(&self) -> u64 {
-        self.vdc.vram_data_high_writes()
-    }
-
-    pub fn vdc_vram_data_high_without_low(&self) -> u64 {
-        self.vdc.vram_data_high_without_low()
-    }
-
-    pub fn vdc_set_write_range(&mut self, start: u16, end: u16) {
-        self.vdc.vram_write_range_start = start;
-        self.vdc.vram_write_range_end = end;
-        self.vdc.vram_write_range_count = 0;
-    }
-
-    pub fn vdc_write_range_count(&self) -> u64 {
-        self.vdc.vram_write_range_count
-    }
-
-    pub fn vdc_enable_mawr_log(&mut self, start: u16, end: u16) {
-        self.vdc.mawr_log.clear();
-        self.vdc.mawr_log_start = start;
-        self.vdc.mawr_log_end = end;
-    }
-
-    pub fn vdc_take_mawr_log(&mut self) -> Vec<u16> {
-        std::mem::take(&mut self.vdc.mawr_log)
-    }
-
-    pub fn vdc_enable_write_log(&mut self, limit: usize) {
-        self.vdc.vram_write_log.clear();
-        self.vdc.vram_write_log_limit = limit;
-    }
-
-    pub fn vdc_take_write_log(&mut self) -> Vec<(u16, u16)> {
-        std::mem::take(&mut self.vdc.vram_write_log)
-    }
-
-    pub fn vdc_write_log_len(&self) -> usize {
-        self.vdc.vram_write_log.len()
-    }
-
-    pub fn vdc_control_write_count(&self) -> u64 {
-        self.vdc.control_write_count()
-    }
-
-    pub fn vdc_last_control(&self) -> u16 {
-        self.vdc.last_control_value()
     }
 
     pub fn vdc_control_register(&self) -> u16 {
@@ -1786,64 +1535,6 @@ impl Bus {
 
     pub fn vdc_control_line(&self, line: usize) -> u16 {
         self.vdc.control_line(line)
-    }
-
-    pub fn enable_vdc_reg_trace(&mut self) {
-        self.vdc.reg_trace_enabled = true;
-        self.vdc.reg_trace.clear();
-    }
-
-    pub fn take_vdc_reg_trace(&mut self) -> Vec<(u16, u8, u16)> {
-        self.vdc.reg_trace_enabled = false;
-        std::mem::take(&mut self.vdc.reg_trace)
-    }
-
-    pub fn vdc_cram_last_source(&self) -> u16 {
-        self.vdc.last_cram_source
-    }
-
-    pub fn vdc_cram_last_length(&self) -> u16 {
-        self.vdc.last_cram_length
-    }
-
-    pub fn vdc_vram_dma_count(&self) -> u64 {
-        self.vdc.vram_dma_count
-    }
-
-    pub fn vdc_vram_last_source(&self) -> u16 {
-        self.vdc.last_vram_dma_source
-    }
-
-    pub fn vdc_vram_last_destination(&self) -> u16 {
-        self.vdc.last_vram_dma_destination
-    }
-
-    pub fn vdc_vram_last_length(&self) -> u16 {
-        self.vdc.last_vram_dma_length
-    }
-
-    pub fn vdc_register_write_count(&self, index: usize) -> u64 {
-        self.vdc.register_write_count(index)
-    }
-
-    pub fn vdc_register_write_counts(&self) -> &[u64; VDC_REGISTER_COUNT] {
-        &self.vdc.register_write_counts
-    }
-
-    pub fn vdc_register_select_count(&self, index: usize) -> u64 {
-        self.vdc.register_select_count(index)
-    }
-
-    pub fn vdc_register_select_counts(&self) -> &[u64; VDC_REGISTER_COUNT] {
-        &self.vdc.register_select_counts
-    }
-
-    pub fn vdc_dcr_write_count(&self) -> u64 {
-        self.vdc.dcr_write_count
-    }
-
-    pub fn vdc_last_dcr_value(&self) -> u8 {
-        self.vdc.last_dcr_value
     }
 
     pub fn configure_cart_ram(&mut self, size: usize) {
@@ -1987,10 +1678,6 @@ impl Bus {
         let (display_height, y_offset) = self.compute_display_height();
         self.current_display_height = display_height;
         self.current_display_y_offset = y_offset;
-        // NOTE: restore_bios_font_tiles() removed.
-        // Games load their own fonts from ROM (e.g. Kato-chan Ken-chan at $E583).
-        // The BIOS font restore was overwriting game fonts and is historically
-        // inaccurate for HuCard games that predate System Card 3.0.
         self.vdc.clear_frame_trigger();
         let force_bg_only = Self::env_debug_bg_only();
         let force_spr_only = Self::env_debug_spr_only();
@@ -2839,10 +2526,6 @@ impl Bus {
             {
                 self.vdc.last_io_addr = offset as u16;
             }
-            let slot = offset & 0x1F;
-            if let Some(entry) = self.vdc_alias_write_counts.get_mut(slot) {
-                *entry = entry.saturating_add(1);
-            }
             match port {
                 VdcPort::Control => self.write_st_port(0, value),
                 VdcPort::Data => {
@@ -2923,30 +2606,13 @@ impl Bus {
 
     #[inline]
     fn write_vce_port(&mut self, addr: u16, value: u8) {
-        self.vce_write_count += 1;
         match addr & 0x0007 {
-            0x00 => {
-                self.vce_control_writes += 1;
-                self.vce.write_control_low(value);
-            }
-            0x01 => {
-                self.vce_control_writes += 1;
-                self.vce_last_control_high = value;
-                if value > self.vce_last_control_high_max {
-                    self.vce_last_control_high_max = value;
-                }
-                self.vce.write_control_high(value);
-            }
+            0x00 => self.vce.write_control_low(value),
+            0x01 => self.vce.write_control_high(value),
             0x02 => self.vce.write_address_low(value),
             0x03 => self.vce.write_address_high(value),
-            0x04 => {
-                self.vce_data_writes += 1;
-                self.vce.write_data_low(value);
-            }
-            0x05 => {
-                self.vce_data_writes += 1;
-                self.vce.write_data_high(value);
-            }
+            0x04 => self.vce.write_data_low(value),
+            0x05 => self.vce.write_data_high(value),
             _ => {}
         }
     }
@@ -2980,8 +2646,6 @@ impl Bus {
 
     fn perform_cram_dma(&mut self) {
         let raw_length = self.vdc.registers[0x12];
-        self.vdc.last_cram_source = self.vdc.marr & 0x7FFF;
-        self.vdc.last_cram_length = raw_length;
         let mut words = raw_length as usize;
         if words == 0 {
             words = 0x200; // CRAMは最大512ワード
@@ -3027,11 +2691,6 @@ impl Bus {
         let mut src = self.vdc.dma_source & 0x7FFF;
         let mut dst = self.vdc.dma_destination & 0x7FFF;
 
-        self.vdc.vram_dma_count = self.vdc.vram_dma_count.saturating_add(1);
-        self.vdc.last_vram_dma_source = src;
-        self.vdc.last_vram_dma_destination = dst;
-        self.vdc.last_vram_dma_length = original_len;
-
         for _ in 0..words {
             let value = self.vdc.vram[(src as usize) & 0x7FFF];
             self.vdc.write_vram_dma_word(dst, value);
@@ -3049,7 +2708,7 @@ impl Bus {
         #[cfg(any(debug_assertions, feature = "trace_hw_writes"))]
         eprintln!(
             "  VDC VRAM DMA end src={:04X} dst={:04X} len={:04X}",
-            self.vdc.dma_source, self.vdc.dma_destination, self.vdc.last_vram_dma_length
+            self.vdc.dma_source, self.vdc.dma_destination, original_len
         );
 
         let busy_cycles = words.saturating_mul(VDC_DMA_WORD_CYCLES);
