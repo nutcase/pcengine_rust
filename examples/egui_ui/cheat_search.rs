@@ -1,0 +1,308 @@
+use egui::{self, Color32, RichText};
+use pce::cheat::{CheatManager, CheatSearch, SearchFilter, WORK_RAM_SIZE};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FilterKind {
+    Equal,
+    NotEqual,
+    GreaterThan,
+    LessThan,
+    Increased,
+    Decreased,
+    Changed,
+    Unchanged,
+    IncreasedBy,
+    DecreasedBy,
+}
+
+impl FilterKind {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Equal => "Equal to",
+            Self::NotEqual => "Not equal to",
+            Self::GreaterThan => "Greater than",
+            Self::LessThan => "Less than",
+            Self::Increased => "Increased",
+            Self::Decreased => "Decreased",
+            Self::Changed => "Changed",
+            Self::Unchanged => "Unchanged",
+            Self::IncreasedBy => "Increased by",
+            Self::DecreasedBy => "Decreased by",
+        }
+    }
+
+    fn needs_value(&self) -> bool {
+        matches!(
+            self,
+            Self::Equal | Self::NotEqual | Self::GreaterThan | Self::LessThan | Self::IncreasedBy | Self::DecreasedBy
+        )
+    }
+
+    const ALL: [FilterKind; 10] = [
+        Self::Equal,
+        Self::NotEqual,
+        Self::GreaterThan,
+        Self::LessThan,
+        Self::Increased,
+        Self::Decreased,
+        Self::Changed,
+        Self::Unchanged,
+        Self::IncreasedBy,
+        Self::DecreasedBy,
+    ];
+}
+
+/// Format an address with region label: W:xxxx or C:xxxx
+fn format_addr(addr: u32, wram_size: usize) -> String {
+    if (addr as usize) < wram_size {
+        format!("W:{:04X}", addr)
+    } else {
+        format!("C:{:04X}", addr as usize - wram_size)
+    }
+}
+
+/// Parse a PCE cheat address. Supports:
+/// - `F8xxxx` → Work RAM offset (xxxx & 0x1FFF)
+/// - `$1297` / `0x1297` / `1297` → direct offset into combined buffer
+fn parse_cheat_addr(input: &str, wram_size: usize, cram_size: usize) -> Option<u32> {
+    let s = input.trim().trim_start_matches('$');
+    let s = s.trim_start_matches("0x").trim_start_matches("0X");
+    let raw = u32::from_str_radix(s, 16).ok()?;
+
+    // PCE bank-prefixed format: top byte is bank number
+    if raw > 0xFFFF {
+        let bank = (raw >> 16) as u8;
+        let offset = (raw & 0x1FFF) as u32; // mask to page size
+        match bank {
+            0xF8 => {
+                // Work RAM
+                if (offset as usize) < wram_size {
+                    return Some(offset);
+                }
+            }
+            0x80..=0xF7 if cram_size > 0 => {
+                // Cart RAM — bank $80 base, each bank is 8KB page
+                let cart_offset = ((bank as usize - 0x80) * 0x2000) + offset as usize;
+                if cart_offset < cram_size {
+                    return Some((wram_size + cart_offset) as u32);
+                }
+            }
+            _ => {}
+        }
+        None
+    } else if (raw as usize) < wram_size + cram_size {
+        Some(raw)
+    } else {
+        None
+    }
+}
+
+pub struct CheatSearchUi {
+    pub search: CheatSearch,
+    pub manager: CheatManager,
+    filter_kind: FilterKind,
+    filter_value: String,
+    new_cheat_label: String,
+    new_cheat_value: String,
+}
+
+impl CheatSearchUi {
+    pub fn new() -> Self {
+        Self {
+            search: CheatSearch::new(),
+            manager: CheatManager::new(),
+            filter_kind: FilterKind::Equal,
+            filter_value: String::new(),
+            new_cheat_label: String::new(),
+            new_cheat_value: String::new(),
+        }
+    }
+
+    pub fn show(&mut self, ui: &mut egui::Ui, ram: &[u8]) {
+        let wram_size = WORK_RAM_SIZE;
+        let has_cram = ram.len() > wram_size;
+
+        ui.horizontal(|ui| {
+            ui.heading("Cheat Search");
+            ui.separator();
+            let size_label = if has_cram {
+                format!(
+                    "WRAM:{}KB + CRAM:{}KB",
+                    wram_size / 1024,
+                    (ram.len() - wram_size) / 1024
+                )
+            } else {
+                format!("WRAM:{}KB", wram_size / 1024)
+            };
+            ui.label(RichText::new(size_label).small());
+        });
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            if ui.button("Snapshot").clicked() {
+                self.search.snapshot(ram);
+            }
+            if ui.button("Reset").clicked() {
+                self.search.reset();
+            }
+            ui.label(format!("Candidates: {}", self.search.candidate_count()));
+            if self.search.has_snapshot() {
+                ui.label(RichText::new("(snapshot taken)").color(Color32::from_rgb(0x44, 0xCC, 0x44)));
+            }
+        });
+
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            ui.label("Filter:");
+            egui::ComboBox::from_id_salt("filter_kind")
+                .selected_text(self.filter_kind.label())
+                .show_ui(ui, |ui| {
+                    for kind in FilterKind::ALL {
+                        ui.selectable_value(&mut self.filter_kind, kind, kind.label());
+                    }
+                });
+
+            if self.filter_kind.needs_value() {
+                ui.label("Value:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.filter_value)
+                        .desired_width(40.0),
+                );
+            }
+
+            if ui.button("Apply").clicked() {
+                if let Some(filter) = self.build_filter() {
+                    self.search.apply_filter(filter, ram);
+                }
+            }
+        });
+
+        ui.separator();
+
+        let candidates = self.search.candidates();
+        let snap = self.search.previous_snapshot();
+        let max_display = 200;
+        let display_count = candidates.len().min(max_display);
+
+        ui.label(format!(
+            "Results (showing {}/{})",
+            display_count,
+            candidates.len()
+        ));
+
+        egui::ScrollArea::vertical()
+            .id_salt("cheat_results")
+            .max_height(150.0)
+            .show(ui, |ui| {
+                ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
+                egui::Grid::new("results_grid")
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.label("Addr");
+                        ui.label("Prev");
+                        ui.label("Cur");
+                        ui.label("");
+                        ui.end_row();
+
+                        for &addr in candidates.iter().take(max_display) {
+                            let cur = ram.get(addr as usize).copied().unwrap_or(0);
+                            let prev = snap.map(|s| s.get(addr)).unwrap_or(0);
+
+                            ui.label(format_addr(addr, wram_size));
+                            ui.label(format!("{:02X}", prev));
+                            ui.label(format!("{:02X}", cur));
+                            if ui.small_button("Add").clicked() {
+                                self.manager.add(
+                                    addr,
+                                    cur,
+                                    format_addr(addr, wram_size),
+                                );
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
+
+        ui.separator();
+        ui.heading("Active Cheats");
+
+        let mut remove_idx = None;
+        egui::ScrollArea::vertical()
+            .id_salt("cheat_entries")
+            .max_height(120.0)
+            .show(ui, |ui| {
+                ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
+                for (i, entry) in self.manager.entries.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut entry.enabled, "");
+                        ui.label(format_addr(entry.address, wram_size));
+                        ui.label("=");
+                        let mut val_str = format!("{:02X}", entry.value);
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut val_str)
+                                .desired_width(25.0),
+                        );
+                        if resp.changed() {
+                            if let Ok(v) = u8::from_str_radix(val_str.trim(), 16) {
+                                entry.value = v;
+                            }
+                        }
+                        ui.text_edit_singleline(&mut entry.label);
+                        if ui.small_button("X").clicked() {
+                            remove_idx = Some(i);
+                        }
+                    });
+                }
+            });
+
+        if let Some(idx) = remove_idx {
+            self.manager.remove(idx);
+        }
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("Add:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.new_cheat_label)
+                    .desired_width(60.0)
+                    .hint_text("F8xxxx"),
+            );
+            ui.label("=");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.new_cheat_value)
+                    .desired_width(25.0)
+                    .hint_text("xx"),
+            );
+            let cram_size = ram.len().saturating_sub(wram_size);
+            if ui.button("Add").clicked() {
+                if let (Some(addr), Ok(val)) = (
+                    parse_cheat_addr(&self.new_cheat_label, wram_size, cram_size),
+                    u8::from_str_radix(self.new_cheat_value.trim(), 16),
+                ) {
+                    self.manager.add(addr, val, format_addr(addr, wram_size));
+                    self.new_cheat_label.clear();
+                    self.new_cheat_value.clear();
+                }
+            }
+        });
+    }
+
+    fn build_filter(&self) -> Option<SearchFilter> {
+        let parse_val = || u8::from_str_radix(self.filter_value.trim(), 10).ok()
+            .or_else(|| u8::from_str_radix(self.filter_value.trim().trim_start_matches("0x").trim_start_matches("0X"), 16).ok());
+
+        match self.filter_kind {
+            FilterKind::Equal => parse_val().map(SearchFilter::Equal),
+            FilterKind::NotEqual => parse_val().map(SearchFilter::NotEqual),
+            FilterKind::GreaterThan => parse_val().map(SearchFilter::GreaterThan),
+            FilterKind::LessThan => parse_val().map(SearchFilter::LessThan),
+            FilterKind::Increased => Some(SearchFilter::Increased),
+            FilterKind::Decreased => Some(SearchFilter::Decreased),
+            FilterKind::Changed => Some(SearchFilter::Changed),
+            FilterKind::Unchanged => Some(SearchFilter::Unchanged),
+            FilterKind::IncreasedBy => parse_val().map(SearchFilter::IncreasedBy),
+            FilterKind::DecreasedBy => parse_val().map(SearchFilter::DecreasedBy),
+        }
+    }
+}

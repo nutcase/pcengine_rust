@@ -210,4 +210,12 @@ impl Emulator {
     pub fn save_backup_ram(&self) -> Option<Vec<u8>> {
         self.bus.cart_ram().map(|ram| ram.to_vec())
     }
+
+    pub fn work_ram(&self) -> &[u8] {
+        self.bus.work_ram()
+    }
+
+    pub fn work_ram_mut(&mut self) -> &mut [u8] {
+        self.bus.work_ram_mut()
+    }
 }

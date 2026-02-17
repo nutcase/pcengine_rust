@@ -7,11 +7,14 @@ edition = "2024"
 default = []
 audio-sdl = ["sdl2"]
 video-sdl = ["sdl2"]
+cheat-ui = ["sdl2", "egui", "egui_sdl2_gl"]
 trace_hw_writes = []
 
 [dependencies]
 sdl2 = { version = "0.36", features = ["bundled"], optional = true }
 bincode = { version = "2.0.1", features = ["derive"] }
+egui = { version = "0.31", optional = true }
+egui_sdl2_gl = { version = "0.31", optional = true }
 
 [[example]]
 name = "audio_sdl"
@@ -20,3 +23,8 @@ required-features = ["audio-sdl"]
 [[example]]
 name = "video_sdl"
 required-features = ["video-sdl"]
+
+[[example]]
+name = "pc_engine"
+path = "examples/pc_engine.rs"
+required-features = ["cheat-ui"]
