@@ -22,6 +22,8 @@ pub struct CheatToolUi {
     pub refresh_requested: bool,
     /// When true, emulation is paused (no ticks). Useful for cheat search.
     pub paused: bool,
+    /// When true, hex viewer auto-refreshes every frame.
+    pub auto_refresh: bool,
 }
 
 impl CheatToolUi {
@@ -34,6 +36,7 @@ impl CheatToolUi {
             ram_snapshot: vec![0u8; 0x2000],
             refresh_requested: false,
             paused: false,
+            auto_refresh: true,
         }
     }
 
@@ -66,9 +69,12 @@ impl CheatToolUi {
                     if ui.button("Refresh").clicked() {
                         self.refresh_requested = true;
                     }
-                    ui.label("(Update hex display from live RAM)");
+                    ui.checkbox(&mut self.auto_refresh, "Auto");
                 });
                 ui.separator();
+                if self.auto_refresh {
+                    self.refresh_requested = true;
+                }
                 let snap = &self.ram_snapshot;
                 self.hex_viewer.show(ui, snap, ram_writes);
             }
