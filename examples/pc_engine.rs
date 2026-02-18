@@ -1,7 +1,7 @@
 mod egui_ui;
 
-use egui_ui::gl_game::GlGameRenderer;
 use egui_ui::CheatToolUi;
+use egui_ui::gl_game::GlGameRenderer;
 use pce::emulator::Emulator;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
@@ -10,9 +10,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use egui_sdl2_gl::gl;
 use egui_sdl2_gl::DpiScaling;
 use egui_sdl2_gl::ShaderVersion;
+use egui_sdl2_gl::gl;
 
 const SCALE: u32 = 3;
 const AUDIO_BATCH: usize = 512;
@@ -109,10 +109,23 @@ fn main() -> Result<(), String> {
     let mut cheat_ui = CheatToolUi::new();
     let mut prev_panel_visible = cheat_ui.panel_visible;
     let mut panel_width_px: u32 = PANEL_WIDTH_DEFAULT as u32;
+    let text_input = video.text_input();
+    let mut text_input_active = false;
+    text_input.stop();
 
     let cheat_path = cheat_file_path(&rom_path);
 
     while !quit {
+        let should_enable_text_input = cheat_ui.panel_visible;
+        if should_enable_text_input != text_input_active {
+            if should_enable_text_input {
+                text_input.start();
+            } else {
+                text_input.stop();
+            }
+            text_input_active = should_enable_text_input;
+        }
+
         egui_state.input.time = Some(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -125,7 +138,9 @@ fn main() -> Result<(), String> {
         for event in event_pump.poll_iter() {
             // Forward to egui first so it can capture text input
             if cheat_ui.panel_visible {
-                egui_state.process_input(&window, event.clone(), &mut painter);
+                if let Some(filtered) = filter_event_for_ascii_text_input(&event) {
+                    egui_state.process_input(&window, filtered, &mut painter);
+                }
             }
 
             match &event {
@@ -150,8 +165,7 @@ fn main() -> Result<(), String> {
                     }
 
                     if let Some(slot) = state_slot_from_keycode(code) {
-                        let ctrl_pressed =
-                            keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
+                        let ctrl_pressed = keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
                         let state_path = state_file_path(&rom_path, slot);
                         if ctrl_pressed {
                             if let Some(parent) = state_path.parent() {
@@ -276,7 +290,11 @@ fn main() -> Result<(), String> {
             }
 
             // Draw game quad on the left; panel occupies the right
-            let panel_px = if cheat_ui.panel_visible { panel_width_px } else { 0 };
+            let panel_px = if cheat_ui.panel_visible {
+                panel_width_px
+            } else {
+                0
+            };
             let game_vp_w = win_w.saturating_sub(panel_px);
             // GL viewport: game on left, full height
             game_renderer.draw(0, 0, game_vp_w as i32, win_h as i32);
@@ -303,7 +321,13 @@ fn main() -> Result<(), String> {
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    cheat_ui.show_panel(ui, &mut ram_writes, wram, cram, Some(&cheat_path));
+                                    cheat_ui.show_panel(
+                                        ui,
+                                        &mut ram_writes,
+                                        wram,
+                                        cram,
+                                        Some(&cheat_path),
+                                    );
                                 });
                         });
                     // Track actual panel width for GL viewport
@@ -321,8 +345,7 @@ fn main() -> Result<(), String> {
                     cheat_ui.refresh_requested = false;
                 }
 
-                let prims =
-                    egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+                let prims = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
                 painter.paint_jobs(None, full_output.textures_delta, prims);
                 egui_state.process_output(&window, &full_output.platform_output);
 
@@ -430,4 +453,28 @@ fn cheat_file_path(rom_path: &str) -> PathBuf {
         .filter(|name| !name.is_empty())
         .unwrap_or("game");
     PathBuf::from("cheats").join(format!("{stem}.json"))
+}
+
+fn filter_event_for_ascii_text_input(event: &Event) -> Option<Event> {
+    match event {
+        // Drop IME composition events so non-ASCII conversion is not used.
+        Event::TextEditing { .. } => None,
+        Event::TextInput {
+            timestamp,
+            window_id,
+            text,
+        } => {
+            let ascii_text: String = text.chars().filter(|ch| ch.is_ascii()).collect();
+            if ascii_text.is_empty() {
+                None
+            } else {
+                Some(Event::TextInput {
+                    timestamp: *timestamp,
+                    window_id: *window_id,
+                    text: ascii_text,
+                })
+            }
+        }
+        _ => Some(event.clone()),
+    }
 }

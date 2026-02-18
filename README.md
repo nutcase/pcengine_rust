@@ -53,6 +53,9 @@ Controls in `video_sdl`:
 State files are persisted under `states/<rom_name>.slotN.state`.
 `video_sdl` 起動中のみ有効で、スロットは `0` から `9` です。
 
+`pc_engine`（ゲーム画面+チートパネル）では、ゲーム操作中は SDL テキスト入力を停止し、
+チートパネル入力は ASCII のみ受け付けます（IME 合成入力は無効）。
+
 ## Build Notes
 - `sdl2` is built with the `bundled` feature.
 - This repo includes `.cargo/config.toml` with:
