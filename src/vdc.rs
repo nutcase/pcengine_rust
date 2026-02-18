@@ -509,21 +509,37 @@ impl Vdc {
         // writes so bg_y_offset is updated.  On real hardware the VDC has
         // already started rendering the RCR scanline with the *pre-ISR*
         // latch values, so we do NOT overwrite the scroll arrays for the
-        // current scanline.  Instead we only account for the h-sync
-        // BYR-latch increment that occurs at the end of this scanline:
-        // after apply_pending_scroll() resets bg_y_offset to 0, the
-        // active-line increment below brings it to 1, so the *next*
-        // scanline renders at BYR+1 (matching MAME's m_byr_latched
-        // semantics).
+        // current scanline.
+        //
+        // We do NOT increment bg_y_offset here.  latch_line_state() for
+        // the RCR scanline already performed the per-scanline increment
+        // before the RCR was detected.  Adding another increment would
+        // double-count, shifting BG content 1 line down at every RCR
+        // boundary and creating visible gaps between sprites and BG.
+        //
+        // If BYR was written during the ISR, apply_pending_scroll() resets
+        // bg_y_offset to 0.  The next latch_line_state() (scanline S+1)
+        // stores 0 and then increments to 1, so scanline S+1 renders at
+        // new_BYR+0 and S+2 at new_BYR+1 — matching MAME's m_byr_latched
+        // semantics.
         self.apply_pending_scroll();
         self.apply_pending_zoom();
 
-        let window = self.vertical_window();
-        let is_active = !self.in_vblank
-            && line >= window.active_start_line
-            && line < window.vblank_start_line;
-        if is_active && self.bg_y_offset_loaded {
-            self.bg_y_offset = self.bg_y_offset.wrapping_add(1);
+        // Relatch BXR (horizontal scroll) and the control register for
+        // the RCR scanline.  The RCR fires during h-sync, before the
+        // active display portion of the scanline begins.  Unlike BYR
+        // (which uses a latch-and-relatch mechanism taking effect on the
+        // *next* scanline), BXR is read directly from the register
+        // during pixel output, so the ISR's BXR write takes effect
+        // immediately on the current scanline.  CR similarly takes
+        // effect immediately.
+        //
+        // We do NOT update scroll_line_y or scroll_line_y_offset here
+        // because BYR uses m_byr_latched semantics: the relatch occurs
+        // at the next h-sync, so BYR changes affect the next scanline.
+        if line < self.scroll_line_x.len() {
+            self.scroll_line_x[line] = self.scroll_x;
+            self.control_line[line] = self.control_for_render();
         }
     }
 

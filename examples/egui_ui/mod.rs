@@ -24,6 +24,8 @@ pub struct CheatToolUi {
     pub paused: bool,
     /// When true, hex viewer auto-refreshes every frame.
     pub auto_refresh: bool,
+    /// Reusable buffer for combined work RAM + cart RAM (avoids per-frame alloc).
+    combined_ram: Vec<u8>,
 }
 
 impl CheatToolUi {
@@ -37,6 +39,7 @@ impl CheatToolUi {
             refresh_requested: false,
             paused: false,
             auto_refresh: true,
+            combined_ram: Vec::new(),
         }
     }
 
@@ -52,9 +55,17 @@ impl CheatToolUi {
         &mut self,
         ui: &mut egui::Ui,
         ram_writes: &mut Vec<(usize, u8)>,
-        live_ram: &[u8],
+        wram: &[u8],
+        cram: Option<&[u8]>,
         cheat_path: Option<&std::path::Path>,
     ) {
+        // Rebuild combined RAM view, reusing existing allocation.
+        self.combined_ram.clear();
+        self.combined_ram.extend_from_slice(wram);
+        if let Some(c) = cram {
+            self.combined_ram.extend_from_slice(c);
+        }
+        let live_ram = &self.combined_ram;
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.active_tab, ActiveTab::HexViewer, "Hex Viewer");
             ui.selectable_value(&mut self.active_tab, ActiveTab::CheatSearch, "Cheat Search");

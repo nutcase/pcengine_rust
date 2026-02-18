@@ -165,11 +165,14 @@ impl Emulator {
         if self.audio_buffer.len() < self.audio_batch_size {
             return None;
         }
-        Some(
-            self.audio_buffer
-                .drain(..self.audio_batch_size)
-                .collect::<Vec<_>>(),
-        )
+        let tail = self.audio_buffer.split_off(self.audio_batch_size);
+        Some(std::mem::replace(&mut self.audio_buffer, tail))
+    }
+
+    /// Copy the current frame into `buf`, reusing its allocation.
+    /// Returns `true` if a frame was ready.
+    pub fn take_frame_into(&mut self, buf: &mut Vec<u32>) -> bool {
+        self.bus.take_frame_into(buf)
     }
 
     pub fn take_frame(&mut self) -> Option<Vec<u32>> {

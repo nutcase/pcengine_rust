@@ -807,6 +807,38 @@ impl Bus {
         std::mem::take(&mut self.audio_buffer)
     }
 
+    /// Copy the current frame into `buf`, reusing its allocation.
+    /// Returns `true` if a frame was ready.
+    pub fn take_frame_into(&mut self, buf: &mut Vec<u32>) -> bool {
+        if !self.frame_ready {
+            if Self::env_force_title_scene() || Self::env_force_title_now() {
+                *buf = Self::synth_title_frame();
+                return true;
+            }
+            return false;
+        }
+        self.frame_ready = false;
+        if Self::env_force_title_now() || Self::env_force_title_scene() {
+            *buf = Self::synth_title_frame();
+            return true;
+        }
+        let w = self.current_display_width;
+        let h = self.current_display_height;
+        let y_off = self.current_display_y_offset;
+        let needed = w * h;
+        buf.resize(needed, 0);
+        for y in 0..h {
+            let src_y = y + y_off;
+            if src_y >= FRAME_HEIGHT {
+                break;
+            }
+            let src = src_y * FRAME_WIDTH;
+            let dst = y * w;
+            buf[dst..dst + w].copy_from_slice(&self.framebuffer[src..src + w]);
+        }
+        true
+    }
+
     pub fn take_frame(&mut self) -> Option<Vec<u32>> {
         if !self.frame_ready {
             // 強制タイトル表示が有効なら、フレームが用意されていなくても即描画を返す
@@ -1033,6 +1065,14 @@ impl Bus {
 
     pub fn vdc_control_line(&self, line: usize) -> u16 {
         self.vdc.control_line(line)
+    }
+
+    pub fn vdc_vram(&self) -> &[u16] {
+        &self.vdc.vram
+    }
+
+    pub fn vdc_map_entry_address(&self, tile_row: usize, tile_col: usize) -> usize {
+        self.vdc.map_entry_address(tile_row, tile_col)
     }
 
     pub fn configure_cart_ram(&mut self, size: usize) {

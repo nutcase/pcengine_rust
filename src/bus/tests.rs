@@ -339,8 +339,8 @@ fn sprite_priority_respects_background_mask() {
     assert!(bus.bg_opaque[0]);
 
     let satb_index = 0;
-    // SAT Y=63 puts sprite at screen row 0 (with the +1 pipeline offset)
-    let y_word = ((0 + 63) & 0x03FF) as u16;
+    // SAT Y=64 puts sprite at screen row 0: screen Y = SAT_Y - 64
+    let y_word = ((0 + 64) & 0x03FF) as u16;
     let x_word = ((0 + 32) & 0x03FF) as u16;
     bus.vdc.satb[satb_index] = y_word;
     bus.vdc.satb[satb_index + 1] = x_word;
@@ -383,8 +383,8 @@ fn sprites_render_when_background_disabled() {
 
     let sprite_y = 32;
     let sprite_x = 24;
-    // SAT Y = screen_y + 63 to account for +1 pipeline offset
-    bus.vdc.satb[0] = ((sprite_y + 63) & 0x03FF) as u16;
+    // SAT Y = screen_y + 64: screen Y = SAT_Y - 64
+    bus.vdc.satb[0] = ((sprite_y + 64) & 0x03FF) as u16;
     bus.vdc.satb[1] = ((sprite_x + 32) & 0x03FF) as u16;
     bus.vdc.satb[2] = 0x0000;
     bus.vdc.satb[3] = 0x0000;
@@ -423,8 +423,8 @@ fn sprite_double_width_draws_all_columns() {
     let sprite_base = 0;
     let sprite_y = 32;
     let sprite_x = 24;
-    // SAT Y = screen_y + 63 to account for +1 pipeline offset
-    bus.vdc.satb[sprite_base] = ((sprite_y + 63) & 0x03FF) as u16;
+    // SAT Y = screen_y + 64: screen Y = SAT_Y - 64
+    bus.vdc.satb[sprite_base] = ((sprite_y + 64) & 0x03FF) as u16;
     bus.vdc.satb[sprite_base + 1] = ((sprite_x + 32) & 0x03FF) as u16;
     bus.vdc.satb[sprite_base + 2] = (BASE_PATTERN as u16) << 1;
     bus.vdc.satb[sprite_base + 3] = 0x0100 | 0x0080;
@@ -452,7 +452,7 @@ fn sprite_scanline_overflow_sets_status() {
     for sprite in 0..17 {
         let base = sprite * 4;
         let x_pos = sprite as i32 * 8;
-        bus.vdc.satb[base] = ((y_pos + 63) & 0x03FF) as u16;
+        bus.vdc.satb[base] = ((y_pos + 64) & 0x03FF) as u16;
         bus.vdc.satb[base + 1] = ((x_pos + 32) & 0x03FF) as u16;
         bus.vdc.satb[base + 2] = (TILE_ID as u16) << 1;
         bus.vdc.satb[base + 3] = 0x0000;
@@ -501,8 +501,8 @@ fn sprite_size_scaling_plots_full_extent() {
     let x_pos = 40;
     let y_pos = 32;
     let satb_index = 0;
-    // SAT Y = screen_y + 63 to account for +1 pipeline offset
-    bus.vdc.satb[satb_index] = ((y_pos + 63) & 0x03FF) as u16;
+    // SAT Y = screen_y + 64: screen Y = SAT_Y - 64
+    bus.vdc.satb[satb_index] = ((y_pos + 64) & 0x03FF) as u16;
     bus.vdc.satb[satb_index + 1] = ((x_pos + 32) & 0x03FF) as u16;
     bus.vdc.satb[satb_index + 2] = (BASE_TILE as u16) << 1;
     bus.vdc.satb[satb_index + 3] = 0x1000 | 0x0100 | 0x0002;
@@ -537,8 +537,8 @@ fn sprite_quad_height_plots_bottom_row() {
     let x_pos = 24;
     let y_pos = 40;
     let satb_index = 0;
-    // SAT Y = screen_y + 63 to account for +1 pipeline offset
-    bus.vdc.satb[satb_index] = ((y_pos + 63) & 0x03FF) as u16;
+    // SAT Y = screen_y + 64: screen Y = SAT_Y - 64
+    bus.vdc.satb[satb_index] = ((y_pos + 64) & 0x03FF) as u16;
     bus.vdc.satb[satb_index + 1] = ((x_pos + 32) & 0x03FF) as u16;
     bus.vdc.satb[satb_index + 2] = (BASE_TILE as u16) << 1;
     bus.vdc.satb[satb_index + 3] = 0x2000;

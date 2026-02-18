@@ -101,7 +101,8 @@ fn main() -> Result<(), String> {
     let mut event_pump = sdl.event_pump().map_err(|e| e.to_string())?;
     let mut quit = false;
     let mut pressed: HashSet<Keycode> = HashSet::new();
-    let mut latest_frame: Option<Vec<u32>> = None;
+    let mut frame_buf: Vec<u32> = Vec::new();
+    let mut frame_buf_ready = false;
     let mut last_present = Instant::now();
 
     let mut game_renderer = GlGameRenderer::new();
@@ -149,10 +150,10 @@ fn main() -> Result<(), String> {
                     }
 
                     if let Some(slot) = state_slot_from_keycode(code) {
-                        let shift_pressed =
-                            keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
+                        let ctrl_pressed =
+                            keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
                         let state_path = state_file_path(&rom_path, slot);
-                        if shift_pressed {
+                        if ctrl_pressed {
                             if let Some(parent) = state_path.parent() {
                                 let _ = std::fs::create_dir_all(parent);
                             }
@@ -165,7 +166,7 @@ fn main() -> Result<(), String> {
                                 Ok(()) => {
                                     emulator.set_audio_batch_size(EMU_AUDIO_BATCH);
                                     audio_device.clear();
-                                    latest_frame = None;
+                                    frame_buf_ready = false;
                                     last_present = Instant::now();
                                     eprintln!("Loaded slot {}", slot);
                                 }
@@ -218,8 +219,8 @@ fn main() -> Result<(), String> {
                 if let Some(samples) = emulator.take_audio_samples() {
                     queue_audio_samples(&audio_device, &samples)?;
                 }
-                if let Some(frame) = emulator.take_frame() {
-                    latest_frame = Some(frame);
+                if emulator.take_frame_into(&mut frame_buf) {
+                    frame_buf_ready = true;
                     frame_seen = true;
                 }
                 if frame_seen && steps >= MAX_STEPS_AFTER_FRAME {
@@ -257,8 +258,9 @@ fn main() -> Result<(), String> {
         }
 
         // Upload game frame to GL texture
-        if let Some(frame) = latest_frame.take() {
-            game_renderer.upload_frame(&frame, current_width, current_height);
+        if frame_buf_ready {
+            game_renderer.upload_frame(&frame_buf, current_width, current_height);
+            frame_buf_ready = false;
         }
 
         let queued = queued_samples(&audio_device);
@@ -289,12 +291,8 @@ fn main() -> Result<(), String> {
                 ));
 
                 let mut ram_writes: Vec<(usize, u8)> = Vec::new();
-                // Build combined RAM buffer: work_ram ++ cart_ram
-                let mut combined_ram = emulator.work_ram().to_vec();
-                if let Some(cram) = emulator.backup_ram() {
-                    combined_ram.extend_from_slice(cram);
-                }
-                let live_ram = &combined_ram;
+                let wram = emulator.work_ram();
+                let cram = emulator.backup_ram();
 
                 let full_output = egui_ctx.run(egui_state.input.take(), |ctx| {
                     let panel_resp = egui::SidePanel::right("cheat_panel")
@@ -305,7 +303,7 @@ fn main() -> Result<(), String> {
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    cheat_ui.show_panel(ui, &mut ram_writes, live_ram, Some(&cheat_path));
+                                    cheat_ui.show_panel(ui, &mut ram_writes, wram, cram, Some(&cheat_path));
                                 });
                         });
                     // Track actual panel width for GL viewport

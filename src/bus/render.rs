@@ -417,10 +417,12 @@ impl Bus {
                 let pattern_word = self.vdc.satb.get(base + 2).copied().unwrap_or(0);
                 let attr_word = self.vdc.satb.get(base + 3).copied().unwrap_or(0);
 
-                // MAME uses (raster_count - 1 - sat_y) for sprite line calc,
-                // effectively shifting sprites 1 line down relative to BG.
-                // The +1 here matches that hardware pipeline delay.
-                let y = (y_word & 0x03FF) as i32 - 64 + 1;
+                // MAME sprite Y: src_y = (m_current_segment_start - sat_y) & 0x3FF
+                // m_current_segment_start = 0x40 at first active line.
+                // So sat_y=64 (0x40) → src_y=0 → first row at display row 0.
+                // Screen Y = sat_y - 64 (no +1; the -1 in "raster_count - 1"
+                // is already factored into m_current_segment_start).
+                let y = (y_word & 0x03FF) as i32 - 64;
                 let x = (x_word & 0x03FF) as i32 - 32;
                 let width_cells = if (attr_word & 0x0100) != 0 {
                     2usize
