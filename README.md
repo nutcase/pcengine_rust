@@ -46,7 +46,7 @@ Controls in `video_sdl`:
 - Button I / II: `Z` / `X`
 - Select: `Shift`
 - Run: `Enter` or `Space`
-- Save state: `Shift + 0..9`
+- Save state: `Ctrl + 0..9`
 - Load state: `0..9`
 - Quit: `Esc`
 
