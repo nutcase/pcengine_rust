@@ -16,10 +16,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     run_frames(&mut emulator, 5, 0xFF);
 
     // Key VRAM addresses to monitor
-    let watch_addrs: &[(u16, &str)] = &[
-        (0x3780, "pat 0xDE"),
-        (0x3740, "pat 0xDD"),
-    ];
+    let watch_addrs: &[(u16, &str)] = &[(0x3780, "pat 0xDE"), (0x3740, "pat 0xDD")];
 
     // Press LEFT for 4 frames, check VRAM state at frame production time
     let left_pressed: u8 = 0xFF & !(1 << 3); // 0xF7
@@ -54,18 +51,30 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let cgx = (attr_w >> 8) & 1;
                 let cgy = (attr_w >> 12) & 3;
                 let width = if cgx == 0 { 16 } else { 32 };
-                let height: i32 = match cgy { 0 => 16, 1 => 32, 3 => 64, _ => 16 };
-                println!("  SPR#{:02} x={:4} y={:4} pat={:03X} pal={:X} {}x{} attr={:04X}",
-                    sprite, x, y, pat, pal, width, height, attr_w);
+                let height: i32 = match cgy {
+                    0 => 16,
+                    1 => 32,
+                    3 => 64,
+                    _ => 16,
+                };
+                println!(
+                    "  SPR#{:02} x={:4} y={:4} pat={:03X} pal={:X} {}x{} attr={:04X}",
+                    sprite, x, y, pat, pal, width, height, attr_w
+                );
             }
 
             // Count pixel diffs in batter area between consecutive frames
             if frame_num > 0 {
                 // Compare with previous PPM (just check pixel data hash for simplicity)
                 let prev_path = format!("pl3_left_{:03}.ppm", frame_num - 1);
-                if let (Ok(prev_data), Ok(cur_data)) = (std::fs::read(&prev_path), std::fs::read(&path)) {
-                    let diff_count = prev_data.iter().zip(cur_data.iter())
-                        .filter(|(a, b)| a != b).count();
+                if let (Ok(prev_data), Ok(cur_data)) =
+                    (std::fs::read(&prev_path), std::fs::read(&path))
+                {
+                    let diff_count = prev_data
+                        .iter()
+                        .zip(cur_data.iter())
+                        .filter(|(a, b)| a != b)
+                        .count();
                     println!("  Byte diffs from frame {}: {}", frame_num - 1, diff_count);
                 }
             }

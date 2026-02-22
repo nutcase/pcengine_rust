@@ -1992,6 +1992,5 @@ enum BlockMode {
     Tai,
 }
 
-
 #[cfg(test)]
 mod tests;

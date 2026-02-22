@@ -18,7 +18,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for _ in 0..3 {
         emu.bus.set_joypad_input(0xFF);
-        loop { emu.tick(); if emu.take_frame().is_some() { break; } }
+        loop {
+            emu.tick();
+            if emu.take_frame().is_some() {
+                break;
+            }
+        }
     }
 
     let mut prev_bxr = emu.bus.vdc_register(0x07).unwrap_or(0);
@@ -37,13 +42,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             prev_bxr = cur_bxr;
             prev_byr = cur_byr;
         }
-        if emu.take_frame().is_some() { break; }
+        if emu.take_frame().is_some() {
+            break;
+        }
     }
 
     println!("BXR/BYR changes during frame ({} ticks):", tick_count);
     for (tick, old_bxr, old_byr, new_bxr, new_byr, pc) in &writes {
-        println!("  tick {:6}: BXR {:4}->{:4} BYR {:4}->{:4} (PC={:04X})",
-            tick, old_bxr, old_byr, new_bxr, new_byr, pc);
+        println!(
+            "  tick {:6}: BXR {:4}->{:4} BYR {:4}->{:4} (PC={:04X})",
+            tick, old_bxr, old_byr, new_bxr, new_byr, pc
+        );
     }
     println!("Total changes: {}", writes.len());
     Ok(())

@@ -40,7 +40,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let byr = emu.bus.vdc_register(0x08).unwrap_or(0);
     let rcr = emu.bus.vdc_register(0x06).unwrap_or(0);
     let cr = emu.bus.vdc_register(0x05).unwrap_or(0);
-    println!("VDC: BXR={} BYR={} RCR=0x{:04X} CR=0x{:04X}", bxr, byr, rcr, cr);
+    println!(
+        "VDC: BXR={} BYR={} RCR=0x{:04X} CR=0x{:04X}",
+        bxr, byr, rcr, cr
+    );
 
     // Walk right for 600 frames, checking per-line scroll and dumping periodically
     let mut anomaly_count = 0;
@@ -105,7 +108,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             if anomaly_count <= 5 {
                 let path = format!("state_sky_anomaly_{}.ppm", phase);
                 write_ppm(&frame, &path)?;
-                println!("  ** SKY ANOMALY ({} white pixels) - dumped to {}", sky_anomalies, path);
+                println!(
+                    "  ** SKY ANOMALY ({} white pixels) - dumped to {}",
+                    sky_anomalies, path
+                );
             }
         }
 

@@ -60,7 +60,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let x = (x_word & 0x03FF) as i32 - 32;
                 let width = if (attr_word & 0x0100) != 0 { 32 } else { 16 };
                 let height = match (attr_word >> 12) & 0x03 {
-                    0 => 16, 1 => 32, _ => 64,
+                    0 => 16,
+                    1 => 32,
+                    _ => 64,
                 };
                 println!("  #{:02} x={:4} y={:4} {}x{}", sprite, x, y, width, height);
             }

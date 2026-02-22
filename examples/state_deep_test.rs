@@ -33,15 +33,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     for phase in 0..2000 {
         // Vary input: walk right, stop, walk left, jump, etc.
         let pad = match phase % 200 {
-            0..=49 => 0xFF & !(1u8 << 1),   // Right
-            50..=59 => 0xFF,                  // Stop
+            0..=49 => 0xFF & !(1u8 << 1),    // Right
+            50..=59 => 0xFF,                 // Stop
             60..=109 => 0xFF & !(1u8 << 3),  // Left
-            110..=119 => 0xFF,                // Stop
+            110..=119 => 0xFF,               // Stop
             120..=139 => 0xFF & !(1u8 << 4), // Button I (action)
             140..=149 => 0xFF & !(1u8 << 0), // Up
             150..=169 => 0xFF & !(1u8 << 1), // Right
             170..=179 => 0xFF & !(1u8 << 5), // Button II
-            _ => 0xFF,                        // Stop
+            _ => 0xFF,                       // Stop
         };
         emu.bus.set_joypad_input(pad);
 
@@ -126,7 +126,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             anomaly_frames += 1;
             println!(
                 "Frame {:4} (phase {:4}): split={} hud_anom={} text_leak={} byr_wrong={} scroll_changes={:?}",
-                total_frames, phase, has_split, hud_anomaly, gameplay_text_leak, gameplay_byr_wrong,
+                total_frames,
+                phase,
+                has_split,
+                hud_anomaly,
+                gameplay_text_leak,
+                gameplay_byr_wrong,
                 scroll_changes
             );
             if dumped < 10 {

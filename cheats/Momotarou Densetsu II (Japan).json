@@ -1,0 +1,32 @@
+[
+  {
+    "address": 538,
+    "value": 255,
+    "enabled": true,
+    "label": "GOLD"
+  },
+  {
+    "address": 539,
+    "value": 255,
+    "enabled": true,
+    "label": "GOLD"
+  },
+  {
+    "address": 536,
+    "value": 255,
+    "enabled": true,
+    "label": "EX"
+  },
+  {
+    "address": 537,
+    "value": 255,
+    "enabled": true,
+    "label": "EX"
+  },
+  {
+    "address": 7339,
+    "value": 255,
+    "enabled": false,
+    "label": "encount"
+  }
+]

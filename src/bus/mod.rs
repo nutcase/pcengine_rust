@@ -1,19 +1,16 @@
 use crate::psg::Psg;
 use crate::vce::Vce;
 use crate::vdc::{
-    Vdc,
-    FRAME_WIDTH, FRAME_HEIGHT,
-    VDC_DMA_WORD_CYCLES,
-    VDC_CTRL_ENABLE_SPRITES_LEGACY, VDC_CTRL_ENABLE_BACKGROUND_LEGACY,
-    VDC_CTRL_ENABLE_BACKGROUND, VDC_CTRL_ENABLE_SPRITES,
-    DMA_CTRL_SRC_DEC, DMA_CTRL_DST_DEC,
+    DMA_CTRL_DST_DEC, DMA_CTRL_SRC_DEC, FRAME_HEIGHT, FRAME_WIDTH, VDC_CTRL_ENABLE_BACKGROUND,
+    VDC_CTRL_ENABLE_BACKGROUND_LEGACY, VDC_CTRL_ENABLE_SPRITES, VDC_CTRL_ENABLE_SPRITES_LEGACY,
+    VDC_DMA_WORD_CYCLES, Vdc,
 };
 
 // Re-export VDC status constants for external consumers (examples, etc.)
 // These were originally `pub const` in this file.
 pub use crate::vdc::{
-    VDC_STATUS_CR, VDC_STATUS_OR, VDC_STATUS_RCR,
-    VDC_STATUS_DS, VDC_STATUS_DV, VDC_STATUS_VBL, VDC_STATUS_BUSY,
+    VDC_STATUS_BUSY, VDC_STATUS_CR, VDC_STATUS_DS, VDC_STATUS_DV, VDC_STATUS_OR, VDC_STATUS_RCR,
+    VDC_STATUS_VBL,
 };
 
 pub const PAGE_SIZE: usize = 0x2000; // 8 KiB per bank
@@ -34,8 +31,8 @@ const HW_CPU_CTRL_BASE: usize = 0x1C00;
 const MASTER_CLOCK_HZ: u32 = 7_159_090;
 const AUDIO_SAMPLE_RATE: u32 = 44_100;
 
-mod font;
 mod env;
+mod font;
 mod render;
 
 use font::FONT;
@@ -47,7 +44,10 @@ use font::FONT;
 struct TransientBool(bool);
 
 impl bincode::Encode for TransientBool {
-    fn encode<E: bincode::enc::Encoder>(&self, _encoder: &mut E) -> Result<(), bincode::error::EncodeError> {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        _encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
         Ok(()) // write nothing
     }
 }
@@ -70,14 +70,16 @@ impl<'de, Context> bincode::BorrowDecode<'de, Context> for TransientBool {
 
 impl core::ops::Deref for TransientBool {
     type Target = bool;
-    fn deref(&self) -> &bool { &self.0 }
+    fn deref(&self) -> &bool {
+        &self.0
+    }
 }
 
 impl core::ops::DerefMut for TransientBool {
-    fn deref_mut(&mut self) -> &mut bool { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut bool {
+        &mut self.0
+    }
 }
-
-
 
 #[derive(Clone, Copy, bincode::Encode, bincode::Decode)]
 enum VdcPort {
@@ -129,7 +131,6 @@ pub struct Bus {
     #[cfg(feature = "trace_hw_writes")]
     st0_lock_window: u8,
 }
-
 
 impl Bus {
     pub fn new() -> Self {
@@ -1233,8 +1234,6 @@ impl Bus {
         }
     }
 
-
-
     pub fn irq_pending(&self) -> bool {
         (self.interrupt_request & self.enabled_irq_mask()) != 0
     }
@@ -1423,7 +1422,6 @@ impl Bus {
         static ENABLED: OnceLock<bool> = OnceLock::new();
         *ENABLED.get_or_init(|| std::env::var("PCE_TRACE_DISABLE_ST0_HOLD").is_err())
     }
-
 
     fn normalized_io_offset(offset: usize) -> usize {
         // Optional: fold 0x0200–0x03FF down to 0x0000–0x01FF when debugging
@@ -1761,7 +1759,6 @@ impl Bus {
     }
 }
 
-
 #[derive(Clone, Copy, Debug, bincode::Encode, bincode::Decode)]
 enum BankMapping {
     Ram { base: usize },
@@ -1794,7 +1791,6 @@ struct Timer {
     prescaler: u32,
     enabled: bool,
 }
-
 
 // PSG constants and types are defined in src/psg.rs
 // Psg is defined in src/psg.rs
@@ -1930,7 +1926,6 @@ impl IoPort {
         0xF0 | nibble
     }
 }
-
 
 #[cfg(test)]
 mod tests;

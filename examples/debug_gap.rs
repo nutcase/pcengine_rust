@@ -3,11 +3,19 @@ use pce::emulator::Emulator;
 use std::{error::Error, fs::File, io::Write};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let rom_name = std::env::args().nth(1).unwrap_or_else(|| "Jaseiken Necromancer (Japan)".into());
+    let rom_name = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "Jaseiken Necromancer (Japan)".into());
     let slot_num = std::env::args().nth(2).unwrap_or_else(|| "4".into());
-    let target_frame: usize = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(5);
+    let target_frame: usize = std::env::args()
+        .nth(3)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
     let rom_path = format!("roms/{}.pce", rom_name);
-    eprintln!("ROM: {} slot={} (capturing frame {})", rom_path, slot_num, target_frame);
+    eprintln!(
+        "ROM: {} slot={} (capturing frame {})",
+        rom_path, slot_num, target_frame
+    );
 
     let rom = std::fs::read(&rom_path)?;
     let mut emu = Emulator::new();
@@ -61,8 +69,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         let changed = ctrl != prev_ctrl || sx != prev_sx || sy != prev_sy;
         if changed {
             rcr_count += 1;
-            eprintln!("row {:3} (sl {:3}): ctrl={:#06x} bg={} spr={} sx={:4} sy={:4} y_off={:4}  <== CHANGE",
-                y, line_idx, ctrl, bg_en as u8, spr_en as u8, sx, sy, sy_off);
+            eprintln!(
+                "row {:3} (sl {:3}): ctrl={:#06x} bg={} spr={} sx={:4} sy={:4} y_off={:4}  <== CHANGE",
+                y, line_idx, ctrl, bg_en as u8, spr_en as u8, sx, sy, sy_off
+            );
         }
         prev_ctrl = ctrl;
         prev_sx = sx;
@@ -90,25 +100,39 @@ fn main() -> Result<(), Box<dyn Error>> {
         for &pixel in &frame_buf[..w.min(frame_buf.len())] {
             *color_counts.entry(pixel).or_insert(0usize) += 1;
         }
-        let bg_color = color_counts.into_iter().max_by_key(|&(_, c)| c).map(|(p, _)| p).unwrap_or(0);
+        let bg_color = color_counts
+            .into_iter()
+            .max_by_key(|&(_, c)| c)
+            .map(|(p, _)| p)
+            .unwrap_or(0);
         eprintln!("Background color estimate: {:#010x}", bg_color);
 
         for y in 1..h.saturating_sub(1) {
             let row_start = y * w;
             let prev_start = (y - 1) * w;
             let next_start = (y + 1) * w;
-            if next_start + w > frame_buf.len() { break; }
+            if next_start + w > frame_buf.len() {
+                break;
+            }
 
             let bg_count: usize = frame_buf[row_start..row_start + w]
-                .iter().filter(|&&p| p == bg_color).count();
+                .iter()
+                .filter(|&&p| p == bg_color)
+                .count();
             let prev_bg: usize = frame_buf[prev_start..prev_start + w]
-                .iter().filter(|&&p| p == bg_color).count();
+                .iter()
+                .filter(|&&p| p == bg_color)
+                .count();
             let next_bg: usize = frame_buf[next_start..next_start + w]
-                .iter().filter(|&&p| p == bg_color).count();
+                .iter()
+                .filter(|&&p| p == bg_color)
+                .count();
 
             if bg_count > prev_bg + 30 && bg_count > next_bg + 30 {
-                eprintln!("  row {:3}: bg_pixels={}/{} (prev={}, next={})",
-                    y, bg_count, w, prev_bg, next_bg);
+                eprintln!(
+                    "  row {:3}: bg_pixels={}/{} (prev={}, next={})",
+                    y, bg_count, w, prev_bg, next_bg
+                );
             }
         }
     }
@@ -124,16 +148,33 @@ fn main() -> Result<(), Box<dyn Error>> {
         let y = (y_word & 0x03FF) as i32 - 64;
         let x = (x_word & 0x03FF) as i32 - 32;
         let height_code = ((attr >> 12) & 0x03) as usize;
-        let h_cells = match height_code { 0 => 1, 1 => 2, _ => 4 };
+        let h_cells = match height_code {
+            0 => 1,
+            1 => 2,
+            _ => 4,
+        };
         let sh = h_cells * 16;
         let w_cells = if (attr & 0x0100) != 0 { 2 } else { 1 };
         let sw = w_cells * 16;
         if y < (h as i32) && y + sh as i32 > 0 && x < (w as i32) && x + sw as i32 > 0 {
             let pri = if (attr & 0x0080) != 0 { "HI" } else { "lo" };
-            eprintln!("  spr[{:2}]: Y={:4}..{:<4} X={:4}..{:<4} {}x{} pat={:#06x} attr={:#06x} pri={}",
-                i, y, y + sh as i32, x, x + sw as i32, sw, sh, pattern, attr, pri);
+            eprintln!(
+                "  spr[{:2}]: Y={:4}..{:<4} X={:4}..{:<4} {}x{} pat={:#06x} attr={:#06x} pri={}",
+                i,
+                y,
+                y + sh as i32,
+                x,
+                x + sw as i32,
+                sw,
+                sh,
+                pattern,
+                attr,
+                pri
+            );
             spr_count += 1;
-            if spr_count >= 30 { break; }
+            if spr_count >= 30 {
+                break;
+            }
         }
     }
 
@@ -165,7 +206,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        eprintln!("Wrote {} ({}x{} @ {}x)", mag_filename, crop_w * scale, crop_h * scale, scale);
+        eprintln!(
+            "Wrote {} ({}x{} @ {}x)",
+            mag_filename,
+            crop_w * scale,
+            crop_h * scale,
+            scale
+        );
     }
 
     // Dump pixel rows around sprite boundaries to spot gaps
@@ -181,10 +228,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let g = ((pixel >> 8) & 0xFF) as u8;
                 let b = (pixel & 0xFF) as u8;
                 // Classify pixel by dominant color channel
-                if r > g && r > b { eprint!("R"); }
-                else if g > r && g > b { eprint!("G"); }
-                else if b > r && b > g { eprint!("B"); }
-                else { eprint!("#"); }
+                if r > g && r > b {
+                    eprint!("R");
+                } else if g > r && g > b {
+                    eprint!("G");
+                } else if b > r && b > g {
+                    eprint!("B");
+                } else {
+                    eprint!("#");
+                }
             }
         }
         eprintln!();
@@ -201,10 +253,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let r = ((pixel >> 16) & 0xFF) as u8;
                 let g = ((pixel >> 8) & 0xFF) as u8;
                 let b = (pixel & 0xFF) as u8;
-                if r > g && r > b { eprint!("R"); }
-                else if g > r && g > b { eprint!("G"); }
-                else if b > r && b > g { eprint!("B"); }
-                else { eprint!("#"); }
+                if r > g && r > b {
+                    eprint!("R");
+                } else if g > r && g > b {
+                    eprint!("G");
+                } else if b > r && b > g {
+                    eprint!("B");
+                } else {
+                    eprint!("#");
+                }
             }
         }
         eprintln!();
@@ -222,23 +279,39 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         // Check if this row duplicates or is very different
         let row_start = row_y * w;
-        let non_black: usize = hash_range.clone()
-            .filter(|&x| frame_buf[row_start + x] != 0).count();
+        let non_black: usize = hash_range
+            .clone()
+            .filter(|&x| frame_buf[row_start + x] != 0)
+            .count();
         if row_y > 40 {
-            let prev_non_black: usize = hash_range.clone()
-                .filter(|&x| frame_buf[(row_y - 1) * w + x] != 0).count();
+            let prev_non_black: usize = hash_range
+                .clone()
+                .filter(|&x| frame_buf[(row_y - 1) * w + x] != 0)
+                .count();
             let next_non_black: usize = if row_y + 1 < h {
-                hash_range.clone().filter(|&x| frame_buf[(row_y + 1) * w + x] != 0).count()
-            } else { 0 };
+                hash_range
+                    .clone()
+                    .filter(|&x| frame_buf[(row_y + 1) * w + x] != 0)
+                    .count()
+            } else {
+                0
+            };
             if non_black + 5 < prev_non_black && non_black + 5 < next_non_black {
                 // Get the y_offset for this row
                 let line_idx = emu.bus.vdc_line_state_index_for_row(row_y);
                 let (sx, sy) = emu.bus.vdc_scroll_line(line_idx);
                 let y_off = emu.bus.vdc_scroll_line_y_offset(line_idx);
                 let effective_y = sy as usize + y_off as usize;
-                eprintln!("  row {:3}: non_black={:3} (prev={:3}, next={:3}) eff_y={} tile_row={} line_in_tile={} ← GAP",
-                    row_y, non_black, prev_non_black, next_non_black,
-                    effective_y, effective_y / 8, effective_y % 8);
+                eprintln!(
+                    "  row {:3}: non_black={:3} (prev={:3}, next={:3}) eff_y={} tile_row={} line_in_tile={} ← GAP",
+                    row_y,
+                    non_black,
+                    prev_non_black,
+                    next_non_black,
+                    effective_y,
+                    effective_y / 8,
+                    effective_y % 8
+                );
             }
         }
         prev_hash = hash;
@@ -250,8 +323,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         let line_idx = emu.bus.vdc_line_state_index_for_row(y);
         let (sx, sy) = emu.bus.vdc_scroll_line(line_idx);
         let y_off = emu.bus.vdc_scroll_line_y_offset(line_idx);
-        eprintln!("  row {:3}: scanline={:3} sx={} sy={} y_off={} eff_y={}",
-            y, line_idx, sx, sy, y_off, sy as usize + y_off as usize);
+        eprintln!(
+            "  row {:3}: scanline={:3} sx={} sy={} y_off={} eff_y={}",
+            y,
+            line_idx,
+            sx,
+            sy,
+            y_off,
+            sy as usize + y_off as usize
+        );
     }
 
     // Dump actual BG tile data at a gap position to verify
@@ -271,11 +351,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         let tile_id = (tile_entry & 0x07FF) as usize;
         let palette_bank = ((tile_entry >> 12) & 0x0F) as usize;
         let tile_base = tile_id * 16;
-        eprintln!("  tile[{},{}] entry={:#06x} id={} pal={}", tile_row, tile_col, tile_entry, tile_id, palette_bank);
+        eprintln!(
+            "  tile[{},{}] entry={:#06x} id={} pal={}",
+            tile_row, tile_col, tile_entry, tile_id, palette_bank
+        );
         // Dump all 8 rows of this tile
         for row in 0..8 {
-            let chr0 = vram.get((tile_base + row) & (vram.len()-1)).copied().unwrap_or(0);
-            let chr1 = vram.get((tile_base + row + 8) & (vram.len()-1)).copied().unwrap_or(0);
+            let chr0 = vram
+                .get((tile_base + row) & (vram.len() - 1))
+                .copied()
+                .unwrap_or(0);
+            let chr1 = vram
+                .get((tile_base + row + 8) & (vram.len() - 1))
+                .copied()
+                .unwrap_or(0);
             let mut pixels = [0u8; 8];
             for bit in 0..8 {
                 let shift = 7 - bit;
@@ -308,8 +397,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         let check_end = (y_end + 3).min(h as i32) as usize;
         let x_range = ((x_center - 10).max(0) as usize)..((x_center + 26).min(w as i32) as usize);
         for row_y in check_start..check_end {
-            eprint!("    row {:3} ({}): ", row_y,
-                if (row_y as i32) < y_end { "SPR" } else { "BG " });
+            eprint!(
+                "    row {:3} ({}): ",
+                row_y,
+                if (row_y as i32) < y_end { "SPR" } else { "BG " }
+            );
             for x in x_range.clone() {
                 let pixel = frame_buf[row_y * w + x];
                 if pixel == 0 {
@@ -318,11 +410,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let r = ((pixel >> 16) & 0xFF) as u8;
                     let g = ((pixel >> 8) & 0xFF) as u8;
                     let b = (pixel & 0xFF) as u8;
-                    if r > 200 && g < 50 && b < 50 { eprint!("R"); }
-                    else if g > 200 && r < 50 && b < 50 { eprint!("G"); }
-                    else if b > 200 && r < 50 && g < 50 { eprint!("B"); }
-                    else if pixel == 0xFF000000 { eprint!("X"); }
-                    else { eprint!("#"); }
+                    if r > 200 && g < 50 && b < 50 {
+                        eprint!("R");
+                    } else if g > 200 && r < 50 && b < 50 {
+                        eprint!("G");
+                    } else if b > 200 && r < 50 && g < 50 {
+                        eprint!("B");
+                    } else if pixel == 0xFF000000 {
+                        eprint!("X");
+                    } else {
+                        eprint!("#");
+                    }
                 }
             }
             eprintln!();

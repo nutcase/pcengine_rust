@@ -26,7 +26,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         emu.bus.set_joypad_input(0xFF);
         loop {
             emu.tick();
-            if emu.take_frame().is_some() { break; }
+            if emu.take_frame().is_some() {
+                break;
+            }
         }
     }
 
@@ -34,7 +36,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     emu.bus.set_joypad_input(0xFF);
     let frame = loop {
         emu.tick();
-        if let Some(f) = emu.take_frame() { break f; }
+        if let Some(f) = emu.take_frame() {
+            break f;
+        }
     };
 
     // Sprite #00 at (60, 145) 32x32
@@ -94,11 +98,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut colors = Vec::new();
         for x in 60..92 {
             let p = frame[y * WIDTH + x];
-            if p != frame[y_start * WIDTH + 0] {  // not background
+            if p != frame[y_start * WIDTH + 0] {
+                // not background
                 non_bg += 1;
             }
             if x == 70 || x == 75 || x == 80 {
-                colors.push(format!("({},{},{})", (p>>16)&0xFF, (p>>8)&0xFF, p&0xFF));
+                colors.push(format!(
+                    "({},{},{})",
+                    (p >> 16) & 0xFF,
+                    (p >> 8) & 0xFF,
+                    p & 0xFF
+                ));
             }
         }
         // Check if this is a BG tile boundary row (every 8 pixels from BYR offset)
@@ -107,11 +117,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         let y_off = emu.bus.vdc_scroll_line_y_offset(line);
         let sample_y = byr as usize + y_off as usize;
         let tile_pixel_row = sample_y % 8;
-        let marker = if tile_pixel_row == 0 { " <<< TILE ROW 0" } else { "" };
+        let marker = if tile_pixel_row == 0 {
+            " <<< TILE ROW 0"
+        } else {
+            ""
+        };
         println!(
             "  row {:3}: non_bg_px={:2} sample_y={:3} tile_px_row={} samples=[{}]{}",
-            y, non_bg, sample_y, tile_pixel_row,
-            colors.join(", "), marker
+            y,
+            non_bg,
+            sample_y,
+            tile_pixel_row,
+            colors.join(", "),
+            marker
         );
     }
 

@@ -73,10 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!();
 
     // --- Dump specific BAT entries ---
-    let specific_addrs: &[(u16, &str)] = &[
-        (0x0270, "row 9 col 48"),
-        (0x0238, "row 8 col 56"),
-    ];
+    let specific_addrs: &[(u16, &str)] = &[(0x0270, "row 9 col 48"), (0x0238, "row 8 col 56")];
 
     for &(bat_addr, label) in specific_addrs {
         println!("=== BAT @ {:#06X} ({}) ===", bat_addr, label);
@@ -117,7 +114,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         // Dump palette entries for this palette bank
         let pal_start = (palette_bank as usize) * 16;
-        print!("Palette bank {} (VCE indices {}-{}):", palette_bank, pal_start, pal_start + 15);
+        print!(
+            "Palette bank {} (VCE indices {}-{}):",
+            palette_bank,
+            pal_start,
+            pal_start + 15
+        );
         for i in 0..16 {
             let rgb = emulator.bus.vce_palette_rgb(pal_start + i);
             let r = (rgb >> 16) & 0xFF;
@@ -136,7 +138,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // --- Dump sprite palettes 3 and 4 ---
     for spr_pal in [3usize, 4] {
         let pal_start = 256 + spr_pal * 16;
-        print!("Sprite palette {} (VCE indices {}-{}):", spr_pal, pal_start, pal_start + 15);
+        print!(
+            "Sprite palette {} (VCE indices {}-{}):",
+            spr_pal,
+            pal_start,
+            pal_start + 15
+        );
         for i in 0..16 {
             let rgb = emulator.bus.vce_palette_rgb(pal_start + i);
             let r = (rgb >> 16) & 0xFF;
@@ -167,11 +174,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         let x = (x_w & 0x03FF) as i32 - 32;
         let pat = (pat_w >> 1) & 0x03FF;
         let pal = attr_w & 0x000F;
-        let cgx = (attr_w >> 8) & 1;  // 0=16px, 1=32px wide
+        let cgx = (attr_w >> 8) & 1; // 0=16px, 1=32px wide
         let cgy = (attr_w >> 12) & 3; // 0=16, 1=32, 2=invalid, 3=64 tall
         let width = if cgx == 0 { 16 } else { 32 };
         let height = match cgy {
-            0 => 16, 1 => 32, 3 => 64, _ => 16,
+            0 => 16,
+            1 => 32,
+            3 => 64,
+            _ => 16,
         };
         let pri = (attr_w >> 7) & 1;
         let vflip = (attr_w >> 15) & 1;
@@ -200,7 +210,10 @@ fn print_bat_row(emulator: &Emulator, row: usize, col_start: usize, col_end: usi
         let tile_id = entry & 0x07FF;
         let palette_bank = (entry >> 12) & 0x0F;
         if entry != 0 {
-            print!("[c{:02}:{:04X} t{:03X}p{:X}] ", col, entry, tile_id, palette_bank);
+            print!(
+                "[c{:02}:{:04X} t{:03X}p{:X}] ",
+                col, entry, tile_id, palette_bank
+            );
         } else {
             print!("[c{:02}:----] ", col);
         }

@@ -24,7 +24,8 @@ fn main() {
     emu.load_hucard(&rom).expect("failed to load HuCard");
     emu.set_audio_batch_size(128);
     emu.reset();
-    emu.load_state_from_file(state_path).expect("failed to load state");
+    emu.load_state_from_file(state_path)
+        .expect("failed to load state");
     emu.set_audio_batch_size(128);
 
     let _ = std::fs::create_dir_all("debug_frames_bik");

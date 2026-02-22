@@ -6,7 +6,9 @@ use std::{error::Error, fs::File, io::Write};
 const FRAME_HEIGHT: usize = 263;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let rom_name = std::env::args().nth(1).unwrap_or_else(|| "Jaseiken Necromancer (Japan)".into());
+    let rom_name = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "Jaseiken Necromancer (Japan)".into());
     let slot = std::env::args().nth(2).unwrap_or_else(|| "4".into());
     let rom_path = format!("roms/{}.pce", rom_name);
     let state_path = format!("states/{}.slot{}.state", rom_name, slot);
@@ -39,8 +41,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Dump per-scanline VDC state
     eprintln!("\n=== Per-scanline VDC state (output rows 0..{}) ===", h);
-    eprintln!("{:>4} {:>5} {:>8} {:>5} {:>5} {:>6} {:>6} {:>6} {:>5} {:>5}",
-        "row", "scan", "ctrl", "bg", "spr", "scr_x", "scr_y", "y_off", "zm_x", "zm_y");
+    eprintln!(
+        "{:>4} {:>5} {:>8} {:>5} {:>5} {:>6} {:>6} {:>6} {:>5} {:>5}",
+        "row", "scan", "ctrl", "bg", "spr", "scr_x", "scr_y", "y_off", "zm_x", "zm_y"
+    );
 
     let mut prev_ctrl: u16 = 0xFFFF;
     let mut prev_sx: u16 = 0xFFFF;
@@ -56,9 +60,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Print lines where something changes, plus first/last few
         let changed = ctrl != prev_ctrl || sx != prev_sx;
         if y < 5 || y >= h - 3 || changed || y % 40 == 0 {
-            eprintln!("{:4} {:5} {:#06x} {:>5} {:>5} {:6} {:6} {:6} {:5} {:5}{}",
-                y, line_idx, ctrl, bg_en, spr_en, sx, sy, sy_off, zx, zy,
-                if changed && y > 0 { " <-- CHANGED" } else { "" });
+            eprintln!(
+                "{:4} {:5} {:#06x} {:>5} {:>5} {:6} {:6} {:6} {:5} {:5}{}",
+                y,
+                line_idx,
+                ctrl,
+                bg_en,
+                spr_en,
+                sx,
+                sy,
+                sy_off,
+                zx,
+                zy,
+                if changed && y > 0 { " <-- CHANGED" } else { "" }
+            );
         }
         prev_ctrl = ctrl;
         prev_sx = sx;
@@ -103,8 +118,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .count();
 
             if bg_count > prev_bg + 20 && bg_count > next_bg + 20 && bg_count > w / 4 {
-                eprintln!("  row {:3}: bg_pixels={}/{} (prev={}, next={})",
-                    y, bg_count, w, prev_bg, next_bg);
+                eprintln!(
+                    "  row {:3}: bg_pixels={}/{} (prev={}, next={})",
+                    y, bg_count, w, prev_bg, next_bg
+                );
             }
         }
     }
@@ -120,13 +137,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         let y = (y_word & 0x03FF) as i32 - 64;
         let x = (x_word & 0x03FF) as i32 - 32;
         let height_code = ((attr >> 12) & 0x03) as usize;
-        let h_cells = match height_code { 0 => 1, 1 => 2, _ => 4 };
+        let h_cells = match height_code {
+            0 => 1,
+            1 => 2,
+            _ => 4,
+        };
         let sh = h_cells * 16;
         if y < 300 && y + sh as i32 > 0 && x < 300 && x + 32 > -32 {
-            eprintln!("  spr[{:2}]: Y={:4} X={:4} pat={:#06x} attr={:#06x} h={}",
-                i, y, x, pattern, attr, sh);
+            eprintln!(
+                "  spr[{:2}]: Y={:4} X={:4} pat={:#06x} attr={:#06x} h={}",
+                i, y, x, pattern, attr, sh
+            );
             count += 1;
-            if count >= 30 { break; }
+            if count >= 30 {
+                break;
+            }
         }
     }
 

@@ -18,8 +18,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut cr_changes = 0u64;
     let mut first_high_10 = false;
 
-    println!("Initial CR={:04X} (incr={})",
-        prev_cr, match (prev_cr >> 11) & 3 { 0 => 1, 1 => 32, 2 => 64, _ => 128 });
+    println!(
+        "Initial CR={:04X} (incr={})",
+        prev_cr,
+        match (prev_cr >> 11) & 3 {
+            0 => 1,
+            1 => 32,
+            2 => 64,
+            _ => 128,
+        }
+    );
 
     for _ in 0..200 {
         let joypad = if frame_count % 120 < 5 {
@@ -53,7 +61,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                 // Show all changes for the first 20 frames, then only significant ones
                 if frame_count < 20 || marker.len() > 0 || cr_changes <= 50 {
-                    let incr = match (cur_cr >> 11) & 3 { 0 => 1, 1 => 32, 2 => 64, _ => 128 };
+                    let incr = match (cur_cr >> 11) & 3 {
+                        0 => 1,
+                        1 => 32,
+                        2 => 64,
+                        _ => 128,
+                    };
                     println!(
                         "Frame {:5} tick {:6}: CR {:04X} -> {:04X} (incr={}){}",
                         frame_count, tick_count, prev_cr, cur_cr, incr, marker
@@ -69,7 +82,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         frame_count += 1;
     }
 
-    println!("\nTotal CR changes in {} frames: {}", frame_count, cr_changes);
+    println!(
+        "\nTotal CR changes in {} frames: {}",
+        frame_count, cr_changes
+    );
     println!("Final CR={:04X}", prev_cr);
     Ok(())
 }

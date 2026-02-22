@@ -1,12 +1,10 @@
 use super::*;
-use crate::psg::*;
 use crate::psg::PSG_WAVE_SIZE;
+use crate::psg::*;
 use crate::vdc::{
-    LINES_PER_FRAME, VDC_BUSY_ACCESS_CYCLES, VDC_VBLANK_INTERVAL,
-    DMA_CTRL_IRQ_SATB, DMA_CTRL_IRQ_VRAM, DMA_CTRL_SATB_AUTO,
-    VDC_VISIBLE_LINES,
-    TILE_WIDTH, TILE_HEIGHT,
-    SPRITE_PATTERN_HEIGHT, SPRITE_PATTERN_WORDS,
+    DMA_CTRL_IRQ_SATB, DMA_CTRL_IRQ_VRAM, DMA_CTRL_SATB_AUTO, LINES_PER_FRAME,
+    SPRITE_PATTERN_HEIGHT, SPRITE_PATTERN_WORDS, TILE_HEIGHT, TILE_WIDTH, VDC_BUSY_ACCESS_CYCLES,
+    VDC_VBLANK_INTERVAL, VDC_VISIBLE_LINES,
 };
 
 const PHI_CYCLES_PER_SAMPLE: u32 = MASTER_CLOCK_HZ / AUDIO_SAMPLE_RATE;
@@ -832,7 +830,10 @@ fn renderer_honours_vertical_window_overscan_rows() {
     // VDW=3 → 4 active output rows (0..3), rows 4+ are overscan → black.
     let active_pixel = bus.framebuffer[0]; // first active line
     let overscan_pixel = bus.framebuffer[6 * FRAME_WIDTH]; // post-active overscan
-    assert_ne!(active_pixel, 0x000000, "active line should render tile data");
+    assert_ne!(
+        active_pixel, 0x000000,
+        "active line should render tile data"
+    );
     assert_eq!(overscan_pixel, 0x000000, "overscan lines should be black");
 }
 
@@ -1209,8 +1210,7 @@ fn render_blank_frame_uses_palette_zero() {
     bus.write_st_port(2, 0x00);
 
     // Run long enough to hit VBlank.
-    let line_cycles =
-        (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
+    let line_cycles = (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
     let steps = line_cycles * (VDC_VISIBLE_LINES as u32 + 1);
     for _ in 0..steps {
         bus.tick(1, true);
@@ -1270,8 +1270,7 @@ fn render_frame_uses_vram_palette_indices() {
     bus.write_st_port(0, 0x05);
     bus.write_st_port(1, 0x88);
     bus.write_st_port(2, 0x80);
-    let line_cycles =
-        (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
+    let line_cycles = (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
     let steps = line_cycles * (VDC_VISIBLE_LINES as u32 + 1);
     for _ in 0..steps {
         bus.tick(1, true);
@@ -1334,8 +1333,7 @@ fn render_frame_respects_map_size_and_scroll() {
     bus.write_st_port(1, 0x88);
     bus.write_st_port(2, 0x80);
 
-    let line_cycles =
-        (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
+    let line_cycles = (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
     let steps = line_cycles * (VDC_VISIBLE_LINES as u32 + 1);
     for _ in 0..steps {
         bus.tick(1, true);
@@ -1388,8 +1386,7 @@ fn render_frame_honours_map_base_offset() {
 
     set_vdc_control(&mut bus, VDC_CTRL_DISPLAY_FULL);
 
-    let line_cycles =
-        (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
+    let line_cycles = (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
     let steps = line_cycles * (VDC_VISIBLE_LINES as u32 + 1);
     let frame = fetch_frame(&mut bus, steps);
     let colour = bus.vce_palette_rgb(0x11);
@@ -1446,8 +1443,7 @@ fn render_frame_respects_cg_mode_restricted_planes() {
     bus.write_st_port(1, 0x88);
     bus.write_st_port(2, 0x80);
 
-    let line_cycles =
-        (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
+    let line_cycles = (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
     let steps = line_cycles * (VDC_VISIBLE_LINES as u32 + 1);
     let frame = fetch_frame(&mut bus, steps);
     let bg_colour = bus.vce_palette_rgb(0x00);
@@ -1511,8 +1507,7 @@ fn render_frame_wraps_horizontally_on_64x64_map() {
     bus.write_st_port(1, 0x88);
     bus.write_st_port(2, 0x80);
 
-    let line_cycles =
-        (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
+    let line_cycles = (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
     let steps = line_cycles * (VDC_VISIBLE_LINES as u32 + 1);
     let frame = fetch_frame(&mut bus, steps);
     let expected = bus.vce_palette_rgb(0x11);
@@ -1569,8 +1564,7 @@ fn render_frame_wraps_vertically_on_64x64_map() {
     bus.write_st_port(1, 0x88);
     bus.write_st_port(2, 0x80);
 
-    let line_cycles =
-        (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
+    let line_cycles = (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
     let steps = line_cycles * (VDC_VISIBLE_LINES as u32 + 1);
     let frame = fetch_frame(&mut bus, steps);
     assert_eq!(
@@ -1939,7 +1933,11 @@ fn vdc_satb_dma_sets_ds_when_source_written() {
     bus.write_st_port(2, (SATB_SOURCE >> 8) as u8);
 
     // DMA is deferred — SATB should NOT be updated yet.
-    assert_eq!(bus.vdc_satb_word(0), 0, "SATB should not update before VBlank");
+    assert_eq!(
+        bus.vdc_satb_word(0),
+        0,
+        "SATB should not update before VBlank"
+    );
 
     // Advance past VBlank so the deferred DMA executes.
     for _ in 0..4 {
@@ -2116,10 +2114,18 @@ fn vdc_dma_status_clears_on_status_read() {
     bus.write_st_port(0, 0x0F);
     bus.write_st_port(1, 0x00);
     bus.write_st_port(2, 0x00);
-    assert_ne!(bus.read_io(0x00) & VDC_STATUS_DV, 0, "DV should survive DCR write");
+    assert_ne!(
+        bus.read_io(0x00) & VDC_STATUS_DV,
+        0,
+        "DV should survive DCR write"
+    );
 
     // Reading status clears DV and drops the IRQ.
-    assert_eq!(bus.read_io(0x00) & VDC_STATUS_DV, 0, "DV cleared after status read");
+    assert_eq!(
+        bus.read_io(0x00) & VDC_STATUS_DV,
+        0,
+        "DV cleared after status read"
+    );
     assert_eq!(bus.pending_interrupts() & IRQ_REQUEST_IRQ1, 0);
 }
 
@@ -2287,8 +2293,7 @@ fn vdc_vblank_irq_fires_via_tick() {
     // Clear any pending VBlank from power-on state.
     bus.read_io(0x00);
     bus.write(0x1403, IRQ_REQUEST_IRQ1);
-    let line_cycles =
-        (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
+    let line_cycles = (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
     let visible_lines = VDC_VISIBLE_LINES as u32;
     let min_expected = line_cycles * visible_lines.saturating_sub(1);
     let max_expected = line_cycles * visible_lines.saturating_add(1);
@@ -2300,8 +2305,7 @@ fn vdc_vblank_irq_fires_via_tick() {
             break;
         }
     }
-    let trigger_iter =
-        trigger_iter.expect("VBlank IRQ did not trigger within two frame intervals");
+    let trigger_iter = trigger_iter.expect("VBlank IRQ did not trigger within two frame intervals");
     assert!(
         trigger_iter >= min_expected && trigger_iter <= max_expected,
         "VBlank IRQ fired outside expected window: iter={trigger_iter}, min={min_expected}, max={max_expected}"
@@ -2354,8 +2358,7 @@ fn vdc_rcr_flag_clears_on_status_read() {
     bus.write_st_port(1, 0x42);
     bus.write_st_port(2, 0x00);
 
-    let line_cycles =
-        (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
+    let line_cycles = (VDC_VBLANK_INTERVAL + LINES_PER_FRAME as u32 - 1) / LINES_PER_FRAME as u32;
     // Advance past scanline 3 to trigger the RCR.
     for _ in 0..=4 {
         bus.tick(line_cycles, true);

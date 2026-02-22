@@ -29,7 +29,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     for row in 0..map_h {
         for col in 0..map_w {
             let addr = row * map_w + col;
-            if addr >= vram_size { continue; }
+            if addr >= vram_size {
+                continue;
+            }
             let entry = emu.bus.vdc_vram_word(addr as u16);
             let tile_id = (entry & 0x07FF) as usize;
             tiles_in_use.insert(tile_id);
@@ -44,7 +46,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for &tile_id in &sorted_tiles {
         let tile_base = tile_id * 16;
-        if tile_base + 15 >= vram_size { continue; }
+        if tile_base + 15 >= vram_size {
+            continue;
+        }
 
         // Check if tile is all blank (all rows zero)
         let mut all_blank = true;
@@ -64,7 +68,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
 
-        if all_blank { continue; }
+        if all_blank {
+            continue;
+        }
         total_nonblank_tiles += 1;
 
         if row0_blank && other_rows_have_data {
@@ -80,7 +86,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!("\nNon-blank tiles in use: {}", total_nonblank_tiles);
-    println!("Tiles with transparent row 0 but data in rows 1-7: {}", transparent_row0_count);
+    println!(
+        "Tiles with transparent row 0 but data in rows 1-7: {}",
+        transparent_row0_count
+    );
     println!(
         "Ratio: {:.1}%",
         if total_nonblank_tiles > 0 {
@@ -104,7 +113,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut transparent_row7_count = 0;
     for &tile_id in &sorted_tiles {
         let tile_base = tile_id * 16;
-        if tile_base + 15 >= vram_size { continue; }
+        if tile_base + 15 >= vram_size {
+            continue;
+        }
 
         let chr0_r7 = emu.bus.vdc_vram_word(tile_base as u16 + 7);
         let chr1_r7 = emu.bus.vdc_vram_word(tile_base as u16 + 15);
@@ -124,7 +135,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             transparent_row7_count += 1;
         }
     }
-    println!("\nTiles with transparent row 7 but data in rows 0-6: {}", transparent_row7_count);
+    println!(
+        "\nTiles with transparent row 7 but data in rows 0-6: {}",
+        transparent_row7_count
+    );
 
     // Check a specific tile that should be fully solid (if any)
     // Let's check the BAT entry at row 0, col 0

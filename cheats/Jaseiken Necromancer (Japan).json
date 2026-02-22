@@ -1,0 +1,38 @@
+[
+  {
+    "address": 7484,
+    "value": 255,
+    "enabled": true,
+    "label": "EX"
+  },
+  {
+    "address": 7485,
+    "value": 30,
+    "enabled": true,
+    "label": "EX"
+  },
+  {
+    "address": 2113,
+    "value": 5,
+    "enabled": true,
+    "label": "sels"
+  },
+  {
+    "address": 1024,
+    "value": 0,
+    "enabled": true,
+    "label": "gold"
+  },
+  {
+    "address": 1025,
+    "value": 255,
+    "enabled": true,
+    "label": "gold"
+  },
+  {
+    "address": 1026,
+    "value": 255,
+    "enabled": true,
+    "label": "gold"
+  }
+]

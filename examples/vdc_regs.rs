@@ -21,7 +21,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         emu.bus.set_joypad_input(0xFF);
         loop {
             emu.tick();
-            if emu.take_frame().is_some() { break; }
+            if emu.take_frame().is_some() {
+                break;
+            }
         }
     }
 
@@ -50,12 +52,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let byr = emu.bus.vdc_register(0x08).unwrap_or(0);
     let mwr = emu.bus.vdc_register(0x09).unwrap_or(0);
     println!("\nControl/Scroll:");
-    println!("  CR  = 0x{:04X} (bits: spr={} bg={} rcr_ie={} vbl_ie={})",
+    println!(
+        "  CR  = 0x{:04X} (bits: spr={} bg={} rcr_ie={} vbl_ie={})",
         cr,
-        (cr >> 6) & 1,   // sprite enable
-        (cr >> 7) & 1,   // BG enable
-        (cr >> 2) & 1,   // RCR interrupt enable
-        (cr >> 3) & 1);  // VBlank interrupt enable
+        (cr >> 6) & 1, // sprite enable
+        (cr >> 7) & 1, // BG enable
+        (cr >> 2) & 1, // RCR interrupt enable
+        (cr >> 3) & 1
+    ); // VBlank interrupt enable
     println!("  RCR = 0x{:04X} ({})", rcr, rcr);
     println!("  BXR = {} BYR = {}", bxr, byr);
     println!("  MWR = 0x{:04X}", mwr);
@@ -78,11 +82,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         let (bxr, byr) = emu.bus.vdc_scroll_line(line);
         let valid = emu.bus.vdc_scroll_line_valid(line);
         if valid {
-            if first_active.is_none() { first_active = Some(row); }
+            if first_active.is_none() {
+                first_active = Some(row);
+            }
             last_active = Some(row);
         }
         if row < 5 || (row >= 33 && row <= 38) || row >= 236 {
-            println!("  row {:3} -> line {:3} BXR={:4} BYR={:4} valid={}", row, line, bxr, byr, valid);
+            println!(
+                "  row {:3} -> line {:3} BXR={:4} BYR={:4} valid={}",
+                row, line, bxr, byr, valid
+            );
         }
     }
     println!("  First active row: {:?}", first_active);
@@ -96,7 +105,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // With BXR=0 and BYR=0, tile_row=0, tile_col starts from 0
     println!("\nBAT row 0 (HUD first tile row):");
     for col in 0..map_w.min(16) {
-        let addr = col;  // simplified - row 0, col
+        let addr = col; // simplified - row 0, col
         let entry = emu.bus.vdc_vram_word(addr as u16);
         let tile_id = entry & 0x07FF;
         let pal = (entry >> 12) & 0x0F;
@@ -132,7 +141,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             let p3 = ((chr1 >> (shift + 8)) & 1) as u8;
             pixels[bit] = p0 | (p1 << 1) | (p2 << 2) | (p3 << 3);
         }
-        println!("  row {}: chr0={:04X} chr1={:04X} -> pixels={:?}", row, chr0, chr1, pixels);
+        println!(
+            "  row {}: chr0={:04X} chr1={:04X} -> pixels={:?}",
+            row, chr0, chr1, pixels
+        );
     }
 
     Ok(())

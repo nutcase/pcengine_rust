@@ -43,7 +43,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         if cur_vram_1400 != prev_vram_1400 {
             println!(
                 "Frame {:5}: VRAM[1400] changed {:04X} -> {:04X}  (in_vblank={}, scanline={})",
-                frame_count, prev_vram_1400, cur_vram_1400,
+                frame_count,
+                prev_vram_1400,
+                cur_vram_1400,
                 emu.bus.vdc_in_vblank(),
                 emu.bus.vdc_current_scanline()
             );
@@ -52,7 +54,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             if cur_vram_1400 == 0 && prev_vram_1400 != 0 {
                 println!("  *** CORRUPTION DETECTED ***");
                 for &addr in &watch_addrs {
-                    println!("    VRAM[{:04X}] = {:04X}", addr, emu.bus.vdc_vram_word(addr));
+                    println!(
+                        "    VRAM[{:04X}] = {:04X}",
+                        addr,
+                        emu.bus.vdc_vram_word(addr)
+                    );
                 }
                 // Don't break - let's see if it recovers
             }
@@ -62,13 +68,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         // Show periodic status for first few frames and at load points
         if frame_count <= 5 || frame_count % 500 == 0 {
-            println!(
-                "Frame {:5}: VRAM[1400]={:04X}",
-                frame_count, cur_vram_1400
-            );
+            println!("Frame {:5}: VRAM[1400]={:04X}", frame_count, cur_vram_1400);
         }
     }
 
-    println!("\nFinal VRAM[1400]={:04X} at frame {}", emu.bus.vdc_vram_word(0x1400), frame_count);
+    println!(
+        "\nFinal VRAM[1400]={:04X} at frame {}",
+        emu.bus.vdc_vram_word(0x1400),
+        frame_count
+    );
     Ok(())
 }

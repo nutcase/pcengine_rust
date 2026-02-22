@@ -5,9 +5,7 @@ mod tables;
 pub(crate) use channel::PsgChannel;
 pub(crate) use tables::*;
 
-use tables::{
-    phase_step_for_period, PSG_STATUS_IRQ,
-};
+use tables::{PSG_STATUS_IRQ, phase_step_for_period};
 
 #[derive(Clone, bincode::Encode, bincode::Decode)]
 pub(crate) struct Psg {

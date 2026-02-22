@@ -1,11 +1,7 @@
 use crate::vdc::{
-    Vdc,
-    FRAME_WIDTH, FRAME_HEIGHT,
-    TILE_WIDTH, TILE_HEIGHT,
-    SPRITE_PATTERN_WIDTH, SPRITE_PATTERN_HEIGHT,
-    SPRITE_PATTERN_WORDS, SPRITE_COUNT,
-    VDC_CTRL_ENABLE_SPRITES_LEGACY, VDC_CTRL_ENABLE_BACKGROUND_LEGACY,
-    VDC_STATUS_OR,
+    FRAME_HEIGHT, FRAME_WIDTH, SPRITE_COUNT, SPRITE_PATTERN_HEIGHT, SPRITE_PATTERN_WIDTH,
+    SPRITE_PATTERN_WORDS, TILE_HEIGHT, TILE_WIDTH, VDC_CTRL_ENABLE_BACKGROUND_LEGACY,
+    VDC_CTRL_ENABLE_SPRITES_LEGACY, VDC_STATUS_OR, Vdc,
 };
 
 use super::Bus;
@@ -511,9 +507,8 @@ impl Bus {
                     };
                     let src_tile_x = src_x / SPRITE_PATTERN_WIDTH;
                     let col_in_tile = src_x % SPRITE_PATTERN_WIDTH;
-                    let pattern_index = sprite.pattern_base_index
-                        + sprite.src_tile_y * 2
-                        + src_tile_x;
+                    let pattern_index =
+                        sprite.pattern_base_index + sprite.src_tile_y * 2 + src_tile_x;
                     let pattern_base = (pattern_index * SPRITE_PATTERN_WORDS) & vram_mask;
 
                     let (plane0_word, plane1_word, plane2_word, plane3_word) = if row_interleaved {

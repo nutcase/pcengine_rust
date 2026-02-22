@@ -108,7 +108,10 @@ impl Vce {
         // Keep latch in sync for reads
         self.data_latch = self.palette.get(idx).copied().unwrap_or(0);
         #[cfg(feature = "trace_hw_writes")]
-        eprintln!("  VCE palette[{idx:03X}] low <= {:02X} => {:04X}", value, self.data_latch);
+        eprintln!(
+            "  VCE palette[{idx:03X}] low <= {:02X} => {:04X}",
+            value, self.data_latch
+        );
     }
 
     pub(crate) fn write_data_high(&mut self, value: u8) {
@@ -122,7 +125,10 @@ impl Vce {
         // Keep latch in sync for reads
         self.data_latch = self.palette.get(idx).copied().unwrap_or(0);
         #[cfg(feature = "trace_hw_writes")]
-        eprintln!("  VCE palette[{idx:03X}] high <= {:02X} => {:04X}", value, self.data_latch);
+        eprintln!(
+            "  VCE palette[{idx:03X}] high <= {:02X} => {:04X}",
+            value, self.data_latch
+        );
         self.increment_index();
     }
 
@@ -189,5 +195,4 @@ impl Vce {
         let b = component(blue);
         ((r as u32) << 16) | ((g as u32) << 8) | b as u32
     }
-
 }

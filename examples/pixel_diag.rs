@@ -176,7 +176,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
         let pattern = (pattern_word >> 1) & 0x03FF;
         let pal = attr_word & 0x000F;
-        let pri = if (attr_word & 0x0080) != 0 { "hi" } else { "lo" };
+        let pri = if (attr_word & 0x0080) != 0 {
+            "hi"
+        } else {
+            "lo"
+        };
         let hf = if (attr_word & 0x0800) != 0 { "H" } else { "." };
         let vf = if (attr_word & 0x8000) != 0 { "V" } else { "." };
         println!(

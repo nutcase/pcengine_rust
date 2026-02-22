@@ -63,8 +63,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             "  tick {:6}: {} RGB({},{},{}) -> RGB({},{},{})  PC={:04X}",
             tick,
             name,
-            (old >> 16) & 0xFF, (old >> 8) & 0xFF, old & 0xFF,
-            (new >> 16) & 0xFF, (new >> 8) & 0xFF, new & 0xFF,
+            (old >> 16) & 0xFF,
+            (old >> 8) & 0xFF,
+            old & 0xFF,
+            (new >> 16) & 0xFF,
+            (new >> 8) & 0xFF,
+            new & 0xFF,
             pc
         );
     }

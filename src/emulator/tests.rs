@@ -1,6 +1,6 @@
 use super::*;
 use crate::bus::PAGE_SIZE;
-use hucard::{HucardHeader, HUCARD_HEADER_SIZE, HUCARD_MAGIC_LO, HUCARD_MAGIC_HI, HUCARD_TYPE_PCE};
+use hucard::{HUCARD_HEADER_SIZE, HUCARD_MAGIC_HI, HUCARD_MAGIC_LO, HUCARD_TYPE_PCE, HucardHeader};
 
 #[test]
 fn emulator_runs_simple_program() {

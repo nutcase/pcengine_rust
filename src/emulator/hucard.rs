@@ -51,7 +51,10 @@ impl HucardHeader {
         self.flags & 0x02 != 0
     }
 
-    pub(super) fn recommended_layout(&self, pages: usize) -> Option<[usize; NUM_HUCARD_WINDOW_BANKS]> {
+    pub(super) fn recommended_layout(
+        &self,
+        pages: usize,
+    ) -> Option<[usize; NUM_HUCARD_WINDOW_BANKS]> {
         if pages == 0 {
             return None;
         }

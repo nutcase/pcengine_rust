@@ -24,7 +24,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         emu.bus.set_joypad_input(0xFF);
         loop {
             emu.tick();
-            if emu.take_frame().is_some() { break; }
+            if emu.take_frame().is_some() {
+                break;
+            }
         }
     }
 
@@ -32,7 +34,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     emu.bus.set_joypad_input(0xFF);
     let frame = loop {
         emu.tick();
-        if let Some(f) = emu.take_frame() { break f; }
+        if let Some(f) = emu.take_frame() {
+            break f;
+        }
     };
 
     println!("=== BYR/scroll values per output row ===");
@@ -88,9 +92,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!(
                 "  row {:3} (tile_px=0): px@10=RGB({},{},{}) px@50=RGB({},{},{}) px@100=RGB({},{},{})",
                 y,
-                (p10 >> 16) & 0xFF, (p10 >> 8) & 0xFF, p10 & 0xFF,
-                (p50 >> 16) & 0xFF, (p50 >> 8) & 0xFF, p50 & 0xFF,
-                (p100 >> 16) & 0xFF, (p100 >> 8) & 0xFF, p100 & 0xFF,
+                (p10 >> 16) & 0xFF,
+                (p10 >> 8) & 0xFF,
+                p10 & 0xFF,
+                (p50 >> 16) & 0xFF,
+                (p50 >> 8) & 0xFF,
+                p50 & 0xFF,
+                (p100 >> 16) & 0xFF,
+                (p100 >> 8) & 0xFF,
+                p100 & 0xFF,
             );
         }
     }
@@ -127,9 +137,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("  VDS: {}", vds);
     println!("  VDW: {}", vdw);
     println!("  VCR: {}", vcr);
-    println!("  active_start_line = VSW+1+VDS+2 = {}+1+{}+2 = {}", vsw, vds, vsw + 1 + vds + 2);
-    println!("  active_end_line = active_start + VDW + 1 = {} + {} + 1 = {}",
-        vsw + 1 + vds + 2, vdw, vsw + 1 + vds + 2 + vdw + 1);
+    println!(
+        "  active_start_line = VSW+1+VDS+2 = {}+1+{}+2 = {}",
+        vsw,
+        vds,
+        vsw + 1 + vds + 2
+    );
+    println!(
+        "  active_end_line = active_start + VDW + 1 = {} + {} + 1 = {}",
+        vsw + 1 + vds + 2,
+        vdw,
+        vsw + 1 + vds + 2 + vdw + 1
+    );
 
     Ok(())
 }

@@ -65,8 +65,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!(
                 "Frame {:3}: sprite#0 at ({},{}) to ({},{}), split_row={:?} {}",
                 frame_idx,
-                char_x, char_y,
-                char_x + 32, char_bottom,
+                char_x,
+                char_y,
+                char_x + 32,
+                char_bottom,
                 split_row,
                 if intersects { "*** INTERSECTS ***" } else { "" }
             );

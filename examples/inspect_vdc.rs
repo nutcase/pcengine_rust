@@ -32,9 +32,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // =========================================================
     println!("=== VDC Registers $00-$13 ===");
     let reg_names = [
-        "MAWR", "MARR", "VRR/VWR", "???", "???", "CR", "RCR", "BXR",
-        "BYR", "MWR", "HSR", "HDR", "VPR", "VDW", "VCR", "DCR",
-        "SOUR", "DESR", "LENR", "DVSSR",
+        "MAWR", "MARR", "VRR/VWR", "???", "???", "CR", "RCR", "BXR", "BYR", "MWR", "HSR", "HDR",
+        "VPR", "VDW", "VCR", "DCR", "SOUR", "DESR", "LENR", "DVSSR",
     ];
     for i in 0..0x14usize {
         if let Some(val) = emu.bus.vdc_register(i) {
@@ -51,7 +50,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // 2) Decode MWR ($09) in detail
     // =========================================================
     let mwr = emu.bus.vdc_register(0x09).unwrap_or(0);
-    println!("\n=== MWR Register ($09) = ${:04X} Detailed Decode ===", mwr);
+    println!(
+        "\n=== MWR Register ($09) = ${:04X} Detailed Decode ===",
+        mwr
+    );
 
     let vram_access = mwr & 0x03;
     let sprite_dot = (mwr >> 2) & 0x03;
@@ -68,20 +70,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let bat_height = if bat_height_code == 0 { 32 } else { 64 };
 
-    println!("  Bits 1-0 (VRAM access width): {} -> {}", vram_access, match vram_access {
-        0 => "2 words",
-        1 => "4 words",
-        2 => "8 words",
-        3 => "8 words",
-        _ => "?",
-    });
-    println!("  Bits 3-2 (Sprite dot period):  {} -> {}", sprite_dot, match sprite_dot {
-        0 => "2-cycle / normal",
-        1 => "2-cycle / CG1",
-        2 => "undocumented",
-        3 => "undocumented",
-        _ => "?",
-    });
+    println!(
+        "  Bits 1-0 (VRAM access width): {} -> {}",
+        vram_access,
+        match vram_access {
+            0 => "2 words",
+            1 => "4 words",
+            2 => "8 words",
+            3 => "8 words",
+            _ => "?",
+        }
+    );
+    println!(
+        "  Bits 3-2 (Sprite dot period):  {} -> {}",
+        sprite_dot,
+        match sprite_dot {
+            0 => "2-cycle / normal",
+            1 => "2-cycle / CG1",
+            2 => "undocumented",
+            3 => "undocumented",
+            _ => "?",
+        }
+    );
     println!(
         "  Bits 5-4 (BAT width code):    {} -> {} tiles",
         bat_width_code, bat_width
@@ -93,7 +103,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "  Bit    7 (CG mode):           {} -> {}",
         cg_mode_bit,
-        if cg_mode_bit == 0 { "CG0 (normal)" } else { "CG1" }
+        if cg_mode_bit == 0 {
+            "CG0 (normal)"
+        } else {
+            "CG1"
+        }
     );
     println!(
         "  => BAT dimensions: {}x{} tiles ({}x{} pixels)",
@@ -119,7 +133,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("  Sprite enable:        {}", (cr & 0x40) != 0);
     println!("  BG enable:            {}", (cr & 0x80) != 0);
     let inc_code = (cr >> 11) & 0x03;
-    let inc_step = match inc_code { 0 => 1, 1 => 32, 2 => 64, _ => 128 };
+    let inc_step = match inc_code {
+        0 => 1,
+        1 => 32,
+        2 => 64,
+        _ => 128,
+    };
     println!("  VRAM increment (11-12): {} -> +{}", inc_code, inc_step);
 
     // =========================================================
@@ -132,7 +151,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Sample a grid of BAT entries across the visible area
     let bxr = emu.bus.vdc_register(0x07).unwrap_or(0);
     let byr = emu.bus.vdc_register(0x08).unwrap_or(0);
-    println!("  Scroll: BXR=${:04X} ({}), BYR=${:04X} ({})", bxr, bxr, byr, byr);
+    println!(
+        "  Scroll: BXR=${:04X} ({}), BYR=${:04X} ({})",
+        bxr, bxr, byr, byr
+    );
 
     let scroll_tile_x = (bxr / 8) as usize;
     let scroll_tile_y = (byr / 8) as usize;
@@ -141,7 +163,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         scroll_tile_x, scroll_tile_y
     );
 
-    println!("\n  BAT entries around the visible area (row, col -> VRAM addr: raw entry -> tile/pal):");
+    println!(
+        "\n  BAT entries around the visible area (row, col -> VRAM addr: raw entry -> tile/pal):"
+    );
     for row_off in 0..30usize {
         let bat_row = (scroll_tile_y + row_off) % (bat_height as usize);
         // Print a few columns across the width
@@ -272,9 +296,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     // For now, just report what we know from registers.
 
     println!("\n=== Scroll Registers ===");
-    println!("  BXR (R$07): ${:04X}", emu.bus.vdc_register(0x07).unwrap_or(0));
-    println!("  BYR (R$08): ${:04X}", emu.bus.vdc_register(0x08).unwrap_or(0));
-    println!("  RCR (R$06): ${:04X}", emu.bus.vdc_register(0x06).unwrap_or(0));
+    println!(
+        "  BXR (R$07): ${:04X}",
+        emu.bus.vdc_register(0x07).unwrap_or(0)
+    );
+    println!(
+        "  BYR (R$08): ${:04X}",
+        emu.bus.vdc_register(0x08).unwrap_or(0)
+    );
+    println!(
+        "  RCR (R$06): ${:04X}",
+        emu.bus.vdc_register(0x06).unwrap_or(0)
+    );
 
     println!("\n=== VDC Timing Registers ===");
     let hsr = emu.bus.vdc_register(0x0A).unwrap_or(0);
@@ -288,14 +321,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     let hdw = hdr & 0x7F;
     let hde = (hdr >> 8) & 0x7F;
     println!("  HSR=${:04X}: HSW={}, HDS={}", hsr, hsw, hds);
-    println!("  HDR=${:04X}: HDW={} ({}px), HDE={}", hdr, hdw, (hdw + 1) * 8, hde);
+    println!(
+        "  HDR=${:04X}: HDW={} ({}px), HDE={}",
+        hdr,
+        hdw,
+        (hdw + 1) * 8,
+        hde
+    );
 
     let vsw = vpr & 0x1F;
     let vds = (vpr >> 8) & 0xFF;
     let vdw_val = vdw & 0x01FF;
     let vcr_val = vcr & 0xFF;
     println!("  VPR=${:04X}: VSW={}, VDS={}", vpr, vsw, vds);
-    println!("  VDW=${:04X}: VDW={} (active lines = {})", vdw, vdw_val, vdw_val + 1);
+    println!(
+        "  VDW=${:04X}: VDW={} (active lines = {})",
+        vdw,
+        vdw_val,
+        vdw_val + 1
+    );
     println!("  VCR=${:04X}: VCR={}", vcr, vcr_val);
 
     println!("\nDone.");

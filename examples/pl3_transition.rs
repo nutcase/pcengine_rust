@@ -21,7 +21,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     while frame_count < 1500 && budget > 0 {
         // Set joypad based on frame
-        let pad = if press_at.iter().any(|&f| frame_count >= f && frame_count < f + press_dur) {
+        let pad = if press_at
+            .iter()
+            .any(|&f| frame_count >= f && frame_count < f + press_dur)
+        {
             run_pressed
         } else {
             0xFF
@@ -38,9 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let bg_en = (cr & 0x80) != 0;
             let spr_en = (cr & 0x40) != 0;
 
-            if vce0 != prev_vce0 || cr != prev_cr || frame_count <= 5
-                || frame_count % 50 == 0
-            {
+            if vce0 != prev_vce0 || cr != prev_cr || frame_count <= 5 || frame_count % 50 == 0 {
                 eprintln!(
                     "frame {:4}: VCE[0]={:06X} (raw={:03X}) CR={:04X} BG={} SPR={}",
                     frame_count, vce0, vce0_raw, cr, bg_en, spr_en

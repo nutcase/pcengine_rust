@@ -23,3 +23,12 @@ With no public history yet, adopt imperative present-tense commit titles (`Imple
 
 ## Hardware References & Research Notes
 Favor primary HuC6280/6270/6260 manuals, cite sources inline when porting behavior, and keep only redistributable documents under version control.
+
+docs/65C02_Opcodes.txt
+docs/pcetech.txt
+docs/doc_links.txt
+docs/vdcdox.txt
+docs/HuC6270 - CMOS Video Display Controller Manual.pdf
+
+# ExecPlans
+When writing complex features or significant refactors, use an ExecPlan (as described in .agent/PLANS.md) from design to implementation.

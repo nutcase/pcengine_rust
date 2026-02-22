@@ -7,9 +7,7 @@ pub struct RamSnapshot {
 
 impl RamSnapshot {
     pub fn capture(ram: &[u8]) -> Self {
-        Self {
-            data: ram.to_vec(),
-        }
+        Self { data: ram.to_vec() }
     }
 
     pub fn get(&self, addr: u32) -> u8 {
@@ -120,9 +118,10 @@ impl CheatSearch {
                 if a + num_digits > ram_len {
                     continue;
                 }
-                let ok = digits.iter().enumerate().all(|(i, &d)| {
-                    current_ram[a + i] == d
-                });
+                let ok = digits
+                    .iter()
+                    .enumerate()
+                    .all(|(i, &d)| current_ram[a + i] == d);
                 if ok {
                     matches.push(addr);
                 }
@@ -280,9 +279,9 @@ mod tests {
         let mut search = CheatSearch::new();
         search.snapshot(&ram);
 
-        ram[0x10] = 8;  // increased
+        ram[0x10] = 8; // increased
         ram[0x20] = 10; // unchanged
-        ram[0x30] = 1;  // decreased
+        ram[0x30] = 1; // decreased
 
         search.apply_filter(SearchFilter::Increased, &ram);
         assert_eq!(search.candidate_count(), 1);

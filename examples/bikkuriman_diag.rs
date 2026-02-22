@@ -28,13 +28,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let cr = emulator.bus.vdc_register(0x05).unwrap_or(0);
     let dcr = emulator.bus.vdc_register(0x0F).unwrap_or(0);
     let dvssr = emulator.bus.vdc_register(0x13).unwrap_or(0);
-    eprintln!("CR={:04X} (BG={} SPR={}) DCR={:04X} (auto_satb={}) DVSSR={:04X}",
-        cr, (cr & 0x80) != 0, (cr & 0x40) != 0,
-        dcr, (dcr & 0x10) != 0, dvssr);
-    eprintln!("satb_written={} satb_pending={} satb_source={:04X}",
+    eprintln!(
+        "CR={:04X} (BG={} SPR={}) DCR={:04X} (auto_satb={}) DVSSR={:04X}",
+        cr,
+        (cr & 0x80) != 0,
+        (cr & 0x40) != 0,
+        dcr,
+        (dcr & 0x10) != 0,
+        dvssr
+    );
+    eprintln!(
+        "satb_written={} satb_pending={} satb_source={:04X}",
         emulator.bus.vdc_satb_written(),
         emulator.bus.vdc_satb_pending(),
-        emulator.bus.vdc_satb_source());
+        emulator.bus.vdc_satb_source()
+    );
 
     // Count sprites
     let mut sat_count = 0;
@@ -50,8 +58,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let sy = (y & 0x03FF) as i32 - 64;
                 let sx = (x & 0x03FF) as i32 - 32;
                 let sp = (pat >> 1) & 0x03FF;
-                eprintln!("  SPR#{:02}: x={:4} y={:4} pat={:03X} pal={:X} attr={:04X}",
-                    sprite, sx, sy, sp, attr & 0xF, attr);
+                eprintln!(
+                    "  SPR#{:02}: x={:4} y={:4} pat={:03X} pal={:X} attr={:04X}",
+                    sprite,
+                    sx,
+                    sy,
+                    sp,
+                    attr & 0xF,
+                    attr
+                );
             }
         }
     }
@@ -87,7 +102,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 if black_count > 16 {
-                    eprintln!("  Black cluster at screen ({},{}): {} black pixels", sx, sy, black_count);
+                    eprintln!(
+                        "  Black cluster at screen ({},{}): {} black pixels",
+                        sx, sy, black_count
+                    );
                     // Show what BAT tile this maps to
                     let bg_x = (sx as u16).wrapping_add(bxr) & 0x1FF;
                     let bg_y = (sy as u16).wrapping_add(byr) & 0x1FF;
@@ -97,8 +115,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let bat_entry = emulator.bus.vdc_vram_word(bat_addr);
                     let tile_id = bat_entry & 0x07FF;
                     let pal = (bat_entry >> 12) & 0x0F;
-                    eprintln!("    BAT[{},{}] addr={:04X} entry={:04X} tile={:03X} pal={:X}",
-                        tile_col, tile_row, bat_addr, bat_entry, tile_id, pal);
+                    eprintln!(
+                        "    BAT[{},{}] addr={:04X} entry={:04X} tile={:03X} pal={:X}",
+                        tile_col, tile_row, bat_addr, bat_entry, tile_id, pal
+                    );
                     // Dump tile pixel data from VRAM
                     let tile_vram_base = tile_id as u16 * 16;
                     eprintln!("    Tile VRAM base={:04X}", tile_vram_base);
@@ -134,7 +154,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         // Dump BAT grid around the black square (BAT col 10-14, row 11-15)
-        eprintln!("\n=== BAT around black square (BXR={:04X} BYR={:04X}) ===", bxr, byr);
+        eprintln!(
+            "\n=== BAT around black square (BXR={:04X} BYR={:04X}) ===",
+            bxr, byr
+        );
         // The black square is at screen (128,64). With BXR=0xE0, BYR=0x2E:
         // bg_x = (128+0xE0)&0x1FF = 352, tile_col = 352/8 = 44 mod 32 = 12
         // bg_y = (64+0x2E)&0x1FF = 110, tile_row = 110/8 = 13
@@ -209,11 +232,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Check CR increment settings
         let cr = emulator.bus.vdc_register(0x05).unwrap_or(0);
         let inc_mode = (cr >> 11) & 0x03;
-        let inc_amount = match inc_mode { 0 => 1, 1 => 32, 2 => 64, _ => 128 };
+        let inc_amount = match inc_mode {
+            0 => 1,
+            1 => 32,
+            2 => 64,
+            _ => 128,
+        };
         eprintln!("\nCR increment mode: {} (+{} words)", inc_mode, inc_amount);
 
         // Check MAWR
-        eprintln!("MAWR (write addr): {:04X}", emulator.bus.vdc_register(0x00).unwrap_or(0));
+        eprintln!(
+            "MAWR (write addr): {:04X}",
+            emulator.bus.vdc_register(0x00).unwrap_or(0)
+        );
     } else {
         eprintln!("No frame captured!");
     }
@@ -235,7 +266,13 @@ fn run_frames(emulator: &mut Emulator, count: usize, pad: u8, frame_count: &mut 
     }
 }
 
-fn run_frames_save(emulator: &mut Emulator, count: usize, pad: u8, frame_count: &mut usize, last: &mut Option<Vec<u32>>) {
+fn run_frames_save(
+    emulator: &mut Emulator,
+    count: usize,
+    pad: u8,
+    frame_count: &mut usize,
+    last: &mut Option<Vec<u32>>,
+) {
     let mut collected = 0;
     let mut budget = count as u64 * 250_000;
     while collected < count && budget > 0 {

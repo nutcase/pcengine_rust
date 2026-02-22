@@ -24,7 +24,8 @@ fn main() {
     emu.load_hucard(&rom).expect("failed to load HuCard");
     emu.set_audio_batch_size(128);
     emu.reset();
-    emu.load_state_from_file(state_path).expect("failed to load state");
+    emu.load_state_from_file(state_path)
+        .expect("failed to load state");
     emu.set_audio_batch_size(128);
 
     let _ = std::fs::create_dir_all("debug_frames");
@@ -38,7 +39,9 @@ fn main() {
     let mut prev_dma_ran = false;
 
     println!("=== Kato-chan Ken-chan Transition Deep Trace ===");
-    println!("Columns: Frame | CR(hex) | Mode | VCE[0] | DCR | SATB_written | SATB_pending | Sprite0 Y/X | Non-black pixels");
+    println!(
+        "Columns: Frame | CR(hex) | Mode | VCE[0] | DCR | SATB_written | SATB_pending | Sprite0 Y/X | Non-black pixels"
+    );
     println!();
 
     for _step in 0..10_000_000u64 {
@@ -90,13 +93,20 @@ fn main() {
             if in_region || satb_changed {
                 println!(
                     "F{:4} CR={:04X} {} VCE0={:03X} written={} pending={} S0=({:3},{:3}) pat={:04X} attr={:04X} S1=({:3},{:3}) S2=({:3},{:3}) px={}",
-                    frame_count, cr, mode, vce0,
+                    frame_count,
+                    cr,
+                    mode,
+                    vce0,
                     if satb_written { "Y" } else { "n" },
                     if satb_pending { "Y" } else { "n" },
-                    s0_y as i32 - 64, s0_x as i32 - 32,
-                    s0_pat, s0_attr,
-                    s1_y as i32 - 64, s1_x as i32 - 32,
-                    s2_y as i32 - 64, s2_x as i32 - 32,
+                    s0_y as i32 - 64,
+                    s0_x as i32 - 32,
+                    s0_pat,
+                    s0_attr,
+                    s1_y as i32 - 64,
+                    s1_x as i32 - 32,
+                    s2_y as i32 - 64,
+                    s2_x as i32 - 32,
                     non_black,
                 );
             }

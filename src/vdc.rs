@@ -613,9 +613,7 @@ impl Vdc {
             // active display, the batch renderer captures all mid-frame VRAM
             // updates while per-line scroll/control state is still intact.
             let vbl = self.vblank_start_scanline();
-            if !self.in_vblank && !self.frame_trigger && vbl > 0
-                && self.scanline == vbl - 1
-            {
+            if !self.in_vblank && !self.frame_trigger && vbl > 0 && self.scanline == vbl - 1 {
                 self.frame_trigger = true;
                 break;
             }
@@ -801,9 +799,11 @@ impl Vdc {
         if index < self.vdc_data.len() {
             self.vdc_data[index] = (self.vdc_data[index] & 0x00FF) | ((value as u16) << 8);
         }
-        let combined = self.vdc_data.get(index).copied().unwrap_or(
-            u16::from_le_bytes([self.latch_low, value])
-        );
+        let combined = self
+            .vdc_data
+            .get(index)
+            .copied()
+            .unwrap_or(u16::from_le_bytes([self.latch_low, value]));
         // Always use the CURRENT AR for the commit target — this matches
         // real HuC6270 behaviour where AR at ST2 time selects the register.
         let index = self.selected_register() as usize;
@@ -918,7 +918,10 @@ impl Vdc {
                 self.scroll_y_pending = masked;
                 self.scroll_y_dirty = true;
                 #[cfg(feature = "trace_hw_writes")]
-                eprintln!("  VDC BYR <= {:04X} (raw {:04X}) @ scanline {}", masked, combined, self.scanline);
+                eprintln!(
+                    "  VDC BYR <= {:04X} (raw {:04X}) @ scanline {}",
+                    masked, combined, self.scanline
+                );
             }
             0x0A => {
                 // HSR (Horizontal Sync Register) – timing only, not zoom.
