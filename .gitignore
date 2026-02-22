@@ -6,3 +6,5 @@ docs/
 *.ppm
 *.pce
 *.state
+*.sav
+*.brm

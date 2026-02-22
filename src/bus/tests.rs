@@ -302,6 +302,46 @@ fn cart_ram_load_and_snapshot_round_trip() {
 }
 
 #[test]
+fn bram_is_locked_until_unlocked_via_1807_and_relocked_by_1803_read() {
+    let mut bus = Bus::new();
+    bus.set_mpr(0, 0xFF);
+    bus.set_mpr(2, 0xF7);
+    let bram_addr = 0x4000u16;
+
+    assert_eq!(bus.read(bram_addr), 0xFF);
+    bus.write(bram_addr, 0x12);
+    assert_eq!(bus.read(bram_addr), 0xFF);
+
+    bus.write(0x1807, 0x80);
+    assert!(bus.bram_unlocked());
+
+    bus.write(bram_addr, 0x34);
+    assert_eq!(bus.read(bram_addr), 0x34);
+
+    let _ = bus.read(0x1803);
+    assert!(!bus.bram_unlocked());
+    assert_eq!(bus.read(bram_addr), 0xFF);
+
+    bus.write(0x1807, 0x80);
+    assert_eq!(bus.read(bram_addr), 0x34);
+}
+
+#[test]
+fn bram_maps_only_first_2k_of_f7_page() {
+    let mut bus = Bus::new();
+    bus.set_mpr(0, 0xFF);
+    bus.set_mpr(2, 0xF7);
+    bus.write(0x1807, 0x80);
+
+    bus.write(0x47FF, 0xAA);
+    bus.write(0x4800, 0x55);
+
+    assert_eq!(bus.read(0x47FF), 0xAA);
+    assert_eq!(bus.read(0x4800), 0xFF);
+    assert_eq!(bus.bram()[0x07FF], 0xAA);
+}
+
+#[test]
 fn sprite_priority_respects_background_mask() {
     let mut bus = Bus::new();
     bus.set_mpr(0, 0xFF);

@@ -28,6 +28,10 @@ const HW_TIMER_BASE: usize = 0x0C00;
 const HW_JOYPAD_BASE: usize = 0x1000;
 const HW_IRQ_BASE: usize = 0x1400;
 const HW_CPU_CTRL_BASE: usize = 0x1C00;
+const BRAM_PAGE: u8 = 0xF7;
+const BRAM_SIZE: usize = 0x0800;
+const BRAM_LOCK_PORT: usize = 0x1803;
+const BRAM_UNLOCK_PORT: usize = 0x1807;
 const MASTER_CLOCK_HZ: u32 = 7_159_090;
 const AUDIO_SAMPLE_RATE: u32 = 44_100;
 
@@ -110,6 +114,8 @@ pub struct Bus {
     framebuffer: Vec<u32>,
     frame_ready: bool,
     cart_ram: Vec<u8>,
+    bram: Vec<u8>,
+    bram_unlocked: bool,
     current_display_width: usize,
     current_display_height: usize,
     current_display_y_offset: usize,
@@ -153,6 +159,8 @@ impl Bus {
             framebuffer: vec![0; FRAME_WIDTH * FRAME_HEIGHT],
             frame_ready: false,
             cart_ram: Vec::new(),
+            bram: vec![0; BRAM_SIZE],
+            bram_unlocked: false,
             current_display_width: 256,
             current_display_height: 224,
             current_display_y_offset: 0,
@@ -253,6 +261,7 @@ impl Bus {
             BankMapping::CartRam { base } => {
                 self.cart_ram.get(base + offset).copied().unwrap_or(0x00)
             }
+            BankMapping::Bram => self.read_bram_byte(offset),
             BankMapping::Hardware => {
                 let io_offset = (addr as usize) & (PAGE_SIZE - 1);
                 // Real PCE hardware only decodes I/O at offsets $0000-$17FF
@@ -260,7 +269,10 @@ impl Bus {
                 // $1800-$1FFF have no I/O device; reads fall through to the
                 // HuCard ROM bus.  This is essential for reading interrupt
                 // vectors ($1FF6-$1FFF) when MPR7=$FF at reset.
-                if io_offset >= 0x1800 {
+                if io_offset >= 0x1800
+                    && io_offset != BRAM_LOCK_PORT
+                    && io_offset != BRAM_UNLOCK_PORT
+                {
                     let rom_pages = self.rom_pages();
                     if rom_pages > 0 {
                         let rom_page = Self::mirror_rom_bank(0xFF, rom_pages);
@@ -366,6 +378,7 @@ impl Bus {
                     self.cart_ram[index] = value;
                 }
             }
+            BankMapping::Bram => self.write_bram_byte(offset, value),
             BankMapping::Hardware => {
                 let io_offset = (addr as usize) & (PAGE_SIZE - 1);
                 self.write_io_internal(io_offset, value);
@@ -420,6 +433,7 @@ impl Bus {
         self.framebuffer.fill(0);
         self.frame_ready = false;
         self.cart_ram.fill(0);
+        self.bram_unlocked = false;
         self.bg_opaque.fill(false);
         self.bg_priority.fill(false);
         self.sprite_line_counts.fill(0);
@@ -1113,6 +1127,18 @@ impl Bus {
         }
     }
 
+    pub fn bram(&self) -> &[u8] {
+        &self.bram
+    }
+
+    pub fn bram_mut(&mut self) -> &mut [u8] {
+        &mut self.bram
+    }
+
+    pub fn bram_unlocked(&self) -> bool {
+        self.bram_unlocked
+    }
+
     /// Return the 8KB RAM page currently mapped by MPR1 (zero page / work RAM).
     pub fn work_ram(&self) -> &[u8] {
         let base = self.mpr1_ram_base();
@@ -1144,6 +1170,14 @@ impl Bus {
             return Err("cart RAM size mismatch");
         }
         self.cart_ram.copy_from_slice(data);
+        Ok(())
+    }
+
+    pub fn load_bram(&mut self, data: &[u8]) -> Result<(), &'static str> {
+        if data.len() != self.bram.len() {
+            return Err("BRAM size mismatch");
+        }
+        self.bram.copy_from_slice(data);
         Ok(())
     }
 
@@ -1283,6 +1317,7 @@ impl Bus {
         let cart_pages = self.cart_ram_pages();
         let mapping = match value {
             0xFF => BankMapping::Hardware,
+            BRAM_PAGE => BankMapping::Bram,
             0xF8..=0xFD => {
                 let ram_pages = self.total_ram_pages().max(1);
                 let logical = (value - 0xF8) as usize % ram_pages;
@@ -1358,6 +1393,22 @@ impl Bus {
 
     fn cart_ram_pages(&self) -> usize {
         self.cart_ram.len() / PAGE_SIZE
+    }
+
+    fn read_bram_byte(&self, offset: usize) -> u8 {
+        if !self.bram_unlocked {
+            return 0xFF;
+        }
+        self.bram.get(offset).copied().unwrap_or(0xFF)
+    }
+
+    fn write_bram_byte(&mut self, offset: usize, value: u8) {
+        if !self.bram_unlocked {
+            return;
+        }
+        if let Some(slot) = self.bram.get_mut(offset) {
+            *slot = value;
+        }
     }
 
     fn vdc_port_kind(offset: usize) -> Option<VdcPort> {
@@ -1489,6 +1540,13 @@ impl Bus {
                     self.io[offset]
                 }
             }
+            0x1800..=0x1BFF => match offset {
+                BRAM_LOCK_PORT => {
+                    self.bram_unlocked = false;
+                    self.io[offset]
+                }
+                _ => self.io[offset],
+            },
             0x1C00..=0x1FFF => {
                 if let Some(value) = self.read_control_register(offset) {
                     value
@@ -1586,6 +1644,12 @@ impl Bus {
                 if !self.io_port.write(offset - HW_JOYPAD_BASE, value) {
                     self.io[offset] = value;
                 }
+            }
+            0x1800..=0x1BFF => {
+                if offset == BRAM_UNLOCK_PORT && (value & 0x80) != 0 {
+                    self.bram_unlocked = true;
+                }
+                self.io[offset] = value;
             }
             0x1C00..=0x1FFF => {
                 // Treat as additional mirror for control/TIMER/IRQ/PSG status
@@ -1764,6 +1828,7 @@ enum BankMapping {
     Ram { base: usize },
     Rom { base: usize },
     CartRam { base: usize },
+    Bram,
     Hardware,
 }
 

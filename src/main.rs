@@ -7,6 +7,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut rom_path: Option<PathBuf> = None;
     let mut load_backup: Option<PathBuf> = None;
     let mut save_backup: Option<PathBuf> = None;
+    let mut load_bram: Option<PathBuf> = None;
+    let mut save_bram: Option<PathBuf> = None;
     let mut frame_limit: Option<usize> = None;
 
     while let Some(arg) = args.next() {
@@ -24,6 +26,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                     save_backup = Some(PathBuf::from(path));
                 } else {
                     eprintln!("--save-backup requires a file path");
+                    return Ok(());
+                }
+            }
+            "--load-bram" => {
+                if let Some(path) = args.next() {
+                    load_bram = Some(PathBuf::from(path));
+                } else {
+                    eprintln!("--load-bram requires a file path");
+                    return Ok(());
+                }
+            }
+            "--save-bram" => {
+                if let Some(path) = args.next() {
+                    save_bram = Some(PathBuf::from(path));
+                } else {
+                    eprintln!("--save-bram requires a file path");
                     return Ok(());
                 }
             }
@@ -74,6 +92,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         None
     };
+    let default_bram = if is_pce {
+        Some(rom_path.with_extension("brm"))
+    } else {
+        None
+    };
 
     if is_pce {
         emulator.load_hucard(&rom)?;
@@ -95,6 +118,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 Err(err) => eprintln!(
                     "warning: could not read backup RAM file {}: {err}",
+                    load_path.display()
+                ),
+            }
+        }
+        let bram_to_load =
+            load_bram.or_else(|| default_bram.as_ref().filter(|path| path.exists()).cloned());
+        if let Some(load_path) = bram_to_load {
+            match fs::read(&load_path) {
+                Ok(bytes) => {
+                    if let Err(err) = emulator.load_bram(&bytes) {
+                        eprintln!(
+                            "warning: failed to load BRAM from {}: {err}",
+                            load_path.display()
+                        );
+                    }
+                }
+                Err(err) => eprintln!(
+                    "warning: could not read BRAM file {}: {err}",
                     load_path.display()
                 ),
             }
@@ -149,21 +190,35 @@ fn main() -> Result<(), Box<dyn Error>> {
         eprintln!("warning: no backup RAM present for this program; nothing saved");
     }
 
+    if is_pce {
+        let snapshot = emulator.save_bram();
+        let save_path = save_bram.or_else(|| default_bram.clone());
+        if let Some(path) = save_path {
+            if let Err(err) = fs::write(&path, snapshot) {
+                eprintln!("warning: failed to write BRAM to {}: {err}", path.display());
+            }
+        }
+    }
+
     Ok(())
 }
 
 fn print_usage() {
-    eprintln!("Usage: pce <program.[bin|pce]> [--load-backup <file>] [--save-backup <file>]");
+    eprintln!(
+        "Usage: pce <program.[bin|pce]> [--load-backup <file>] [--save-backup <file>] [--load-bram <file>] [--save-bram <file>]"
+    );
     eprintln!("  .bin  : loads a raw HuC6280 program at $C000");
     eprintln!("  .pce  : loads a HuCard image and maps initial banks");
     eprintln!("Options:");
     eprintln!("  --load-backup <file>  Load HuCard backup RAM from file before reset");
     eprintln!("  --save-backup <file>  Save HuCard backup RAM to file after run");
+    eprintln!("  --load-bram <file>    Load Ten no Koe 2 BRAM (2KB) from file before reset");
+    eprintln!("  --save-bram <file>    Save Ten no Koe 2 BRAM (2KB) to file after run");
     eprintln!("  --frame-limit <n>     Run until N frames are produced (or budget exhausted)");
     eprintln!("  --help                Show this message");
     eprintln!();
     eprintln!(
         "When running a .pce HuCard, backup RAM automatically loads/saves from the \
-         ROM path with a .sav extension unless overridden."
+         ROM path with .sav (cart RAM) and .brm (Ten no Koe 2 BRAM) extensions unless overridden."
     );
 }

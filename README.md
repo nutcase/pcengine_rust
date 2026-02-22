@@ -12,6 +12,7 @@ Current focus is correctness-first bring-up using `roms/Kato-chan & Ken-chan (Ja
 - HuC6280 PSG register model and sample generation path, plus SDL audio playback examples.
 - HuCard loader (`.pce`) with optional header handling and initial bank mapping.
 - Backup RAM load/save flow for HuCard runs.
+- Ten no Koe 2 BRAM (2KB) emulation: `MPR=$F7`, lock/unlock via `$1803/$1807`, file persistence.
 
 ## Quick Start
 Preferred launcher:
@@ -29,11 +30,11 @@ cargo run -- path/to/program.bin
 
 Useful options:
 ```bash
-cargo run -- roms/<game>.pce --load-backup saves/game.sav --save-backup saves/game.sav --frame-limit 2
+cargo run -- roms/<game>.pce --load-backup saves/game.sav --save-backup saves/game.sav --load-bram saves/game.brm --save-bram saves/game.brm --frame-limit 2
 ```
 
 - `.bin` programs load at `$C000`.
-- `.pce` HuCards auto-load/save `ROM_NAME.sav` unless explicitly overridden.
+- `.pce` HuCards auto-load/save `ROM_NAME.sav` (HuCard backup RAM) and `ROM_NAME.brm` (Ten no Koe 2 BRAM) unless explicitly overridden.
 
 ## SDL Front-Ends
 ```bash

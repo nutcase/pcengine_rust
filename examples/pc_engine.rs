@@ -45,10 +45,46 @@ fn main() -> Result<(), String> {
         .extension()
         .map(|ext| ext.eq_ignore_ascii_case("pce"))
         .unwrap_or(false);
+    let backup_path = Path::new(&rom_path).with_extension("sav");
+    let bram_path = Path::new(&rom_path).with_extension("brm");
     if is_pce {
         emulator
             .load_hucard(&rom)
             .map_err(|err| format!("failed to load HuCard: {err}"))?;
+        if backup_path.exists() {
+            match std::fs::read(&backup_path) {
+                Ok(bytes) => {
+                    if let Err(err) = emulator.load_backup_ram(&bytes) {
+                        eprintln!(
+                            "warning: failed to load backup RAM from {}: {err}",
+                            backup_path.display()
+                        );
+                    }
+                }
+                Err(err) => eprintln!(
+                    "warning: could not read backup RAM file {}: {err}",
+                    backup_path.display()
+                ),
+            }
+        }
+        if bram_path.exists() {
+            match std::fs::read(&bram_path) {
+                Ok(bytes) => {
+                    if let Err(err) = emulator.load_bram(&bytes) {
+                        eprintln!(
+                            "warning: failed to load BRAM from {}: {err}",
+                            bram_path.display()
+                        );
+                    }
+                }
+                Err(err) => {
+                    eprintln!(
+                        "warning: could not read BRAM file {}: {err}",
+                        bram_path.display()
+                    )
+                }
+            }
+        }
     } else {
         emulator.load_program(0xC000, &rom);
     }
@@ -399,6 +435,23 @@ fn main() -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(1));
         } else {
             std::thread::yield_now();
+        }
+    }
+
+    if is_pce {
+        if let Some(snapshot) = emulator.save_backup_ram() {
+            if let Err(err) = std::fs::write(&backup_path, snapshot) {
+                eprintln!(
+                    "warning: failed to write backup RAM to {}: {err}",
+                    backup_path.display()
+                );
+            }
+        }
+        if let Err(err) = std::fs::write(&bram_path, emulator.save_bram()) {
+            eprintln!(
+                "warning: failed to write BRAM to {}: {err}",
+                bram_path.display()
+            );
         }
     }
 

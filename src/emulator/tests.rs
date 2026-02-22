@@ -105,6 +105,25 @@ fn backup_ram_round_trip_via_emulator_api() {
 }
 
 #[test]
+fn bram_round_trip_via_emulator_api() {
+    let rom = vec![0xFF; PAGE_SIZE * 8];
+    let mut emu = Emulator::new();
+    emu.load_hucard(&rom).unwrap();
+
+    assert_eq!(emu.bram().len(), 0x0800);
+    assert!(emu.load_bram(&vec![0; 0x0400]).is_err());
+
+    let snapshot = vec![0x5A; 0x0800];
+    emu.load_bram(&snapshot).unwrap();
+    assert_eq!(emu.save_bram()[0], 0x5A);
+
+    emu.bus.set_mpr(0, 0xFF);
+    emu.bus.set_mpr(2, 0xF7);
+    emu.bus.write(0x1807, 0x80);
+    assert_eq!(emu.bus.read(0x4000), 0x5A);
+}
+
+#[test]
 fn wai_unblocks_when_timer_irq_fires() {
     let program = [
         // Set MPR[0]=$FF for I/O access at $0000-$1FFF

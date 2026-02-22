@@ -214,6 +214,25 @@ impl Emulator {
         self.bus.cart_ram().map(|ram| ram.to_vec())
     }
 
+    pub fn bram(&self) -> &[u8] {
+        self.bus.bram()
+    }
+
+    pub fn bram_mut(&mut self) -> &mut [u8] {
+        self.bus.bram_mut()
+    }
+
+    pub fn load_bram(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
+        self.bus
+            .load_bram(data)
+            .map_err(|err| Box::<dyn Error>::from(err.to_string()))?;
+        Ok(())
+    }
+
+    pub fn save_bram(&self) -> Vec<u8> {
+        self.bus.bram().to_vec()
+    }
+
     pub fn work_ram(&self) -> &[u8] {
         self.bus.work_ram()
     }
