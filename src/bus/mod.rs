@@ -37,59 +37,16 @@ const AUDIO_SAMPLE_RATE: u32 = 44_100;
 
 mod env;
 mod font;
+mod io;
+mod mapping;
 mod render;
+mod types;
 
+use self::types::{
+    BankMapping, ControlRegister, IoPort, Timer, TransientBool, TransientBram, TransientU64,
+    VdcPort,
+};
 use font::FONT;
-
-/// A `bool` wrapper that is invisible to bincode serialization.
-/// Encodes as zero bytes; decodes as `false`.  Used for transient render
-/// state that must survive struct derivation but not save-state files.
-#[derive(Clone, Copy, Default)]
-struct TransientBool(bool);
-
-impl bincode::Encode for TransientBool {
-    fn encode<E: bincode::enc::Encoder>(
-        &self,
-        _encoder: &mut E,
-    ) -> Result<(), bincode::error::EncodeError> {
-        Ok(()) // write nothing
-    }
-}
-
-impl<Context> bincode::Decode<Context> for TransientBool {
-    fn decode<D: bincode::de::Decoder>(
-        _decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        Ok(Self(false))
-    }
-}
-
-impl<'de, Context> bincode::BorrowDecode<'de, Context> for TransientBool {
-    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
-        _decoder: &mut D,
-    ) -> Result<Self, bincode::error::DecodeError> {
-        Ok(Self(false))
-    }
-}
-
-impl core::ops::Deref for TransientBool {
-    type Target = bool;
-    fn deref(&self) -> &bool {
-        &self.0
-    }
-}
-
-impl core::ops::DerefMut for TransientBool {
-    fn deref_mut(&mut self) -> &mut bool {
-        &mut self.0
-    }
-}
-
-#[derive(Clone, Copy, bincode::Encode, bincode::Decode)]
-enum VdcPort {
-    Control,
-    Data,
-}
 
 /// Memory bus exposing an 8x8 KiB banked window into linear RAM/ROM data.
 /// This mirrors the HuC6280 page architecture and provides simple helpers
@@ -114,8 +71,8 @@ pub struct Bus {
     framebuffer: Vec<u32>,
     frame_ready: bool,
     cart_ram: Vec<u8>,
-    bram: Vec<u8>,
-    bram_unlocked: bool,
+    bram: TransientBram,
+    bram_unlocked: TransientBool,
     current_display_width: usize,
     current_display_height: usize,
     current_display_y_offset: usize,
@@ -133,7 +90,7 @@ pub struct Bus {
     #[cfg(feature = "trace_hw_writes")]
     last_pc_for_trace: Option<u16>,
     #[cfg(debug_assertions)]
-    debug_force_ds_after: u64,
+    debug_force_ds_after: TransientU64,
     #[cfg(feature = "trace_hw_writes")]
     st0_lock_window: u8,
 }
@@ -159,8 +116,8 @@ impl Bus {
             framebuffer: vec![0; FRAME_WIDTH * FRAME_HEIGHT],
             frame_ready: false,
             cart_ram: Vec::new(),
-            bram: vec![0; BRAM_SIZE],
-            bram_unlocked: false,
+            bram: TransientBram::default(),
+            bram_unlocked: TransientBool(false),
             current_display_width: 256,
             current_display_height: 224,
             current_display_y_offset: 0,
@@ -171,7 +128,7 @@ impl Bus {
             #[cfg(feature = "trace_hw_writes")]
             last_pc_for_trace: None,
             #[cfg(debug_assertions)]
-            debug_force_ds_after: 0,
+            debug_force_ds_after: TransientU64(0),
             #[cfg(feature = "trace_hw_writes")]
             st0_lock_window: 0,
         };
@@ -433,14 +390,14 @@ impl Bus {
         self.framebuffer.fill(0);
         self.frame_ready = false;
         self.cart_ram.fill(0);
-        self.bram_unlocked = false;
+        self.bram_unlocked = TransientBool(false);
         self.bg_opaque.fill(false);
         self.bg_priority.fill(false);
         self.sprite_line_counts.fill(0);
         self.vdc.clear_sprite_overflow();
         #[cfg(debug_assertions)]
         {
-            self.debug_force_ds_after = 0;
+            self.debug_force_ds_after = TransientU64(0);
         }
         #[cfg(feature = "trace_hw_writes")]
         {
@@ -491,6 +448,12 @@ impl Bus {
             self.update_mpr(index);
             #[cfg(feature = "trace_hw_writes")]
             eprintln!("  MPR{index} <= {:02X} -> {:?}", value, self.banks[index]);
+        }
+    }
+
+    pub fn rebuild_mpr_mappings(&mut self) {
+        for idx in 0..NUM_BANKS {
+            self.update_mpr(idx);
         }
     }
 
@@ -1136,7 +1099,7 @@ impl Bus {
     }
 
     pub fn bram_unlocked(&self) -> bool {
-        self.bram_unlocked
+        *self.bram_unlocked
     }
 
     /// Return the 8KB RAM page currently mapped by MPR1 (zero page / work RAM).
@@ -1179,82 +1142,6 @@ impl Bus {
         }
         self.bram.copy_from_slice(data);
         Ok(())
-    }
-
-    fn read_control_register(&mut self, offset: usize) -> Option<u8> {
-        match Self::decode_control_register(offset)? {
-            ControlRegister::TimerCounter => Some(self.timer.read_counter()),
-            ControlRegister::TimerControl => Some(self.timer.control()),
-            ControlRegister::IrqMask => Some(self.interrupt_disable),
-            ControlRegister::IrqStatus => {
-                if let Some(force) = Self::env_irq_status_default() {
-                    Some(self.interrupt_request | force)
-                } else {
-                    Some(self.interrupt_request)
-                }
-            }
-        }
-    }
-
-    fn write_control_register(&mut self, offset: usize, value: u8) -> bool {
-        match Self::decode_control_register(offset) {
-            Some(ControlRegister::TimerCounter) => {
-                self.timer.write_reload(value);
-                true
-            }
-            Some(ControlRegister::TimerControl) => {
-                self.timer.write_control(value);
-                true
-            }
-            Some(ControlRegister::IrqMask) => {
-                let mask = IRQ_DISABLE_IRQ2 | IRQ_DISABLE_IRQ1 | IRQ_DISABLE_TIMER;
-                self.interrupt_disable = value & mask;
-                true
-            }
-            Some(ControlRegister::IrqStatus) => {
-                // On real HuC6280, writing to $1403 always clears the timer
-                // IRQ regardless of the written value (confirmed by Mednafen).
-                self.interrupt_request &= !IRQ_REQUEST_TIMER;
-                true
-            }
-            None => false,
-        }
-    }
-
-    fn decode_control_register(offset: usize) -> Option<ControlRegister> {
-        if (HW_TIMER_BASE..=HW_TIMER_BASE + 0x03FF).contains(&offset) {
-            match offset & 0x01 {
-                0x00 => Some(ControlRegister::TimerCounter),
-                0x01 => Some(ControlRegister::TimerControl),
-                _ => None,
-            }
-        } else if (HW_IRQ_BASE..=HW_IRQ_BASE + 0x03FF).contains(&offset) {
-            match offset & 0x03 {
-                0x02 => Some(ControlRegister::IrqMask),
-                0x03 => Some(ControlRegister::IrqStatus),
-                _ => None,
-            }
-        } else if (HW_CPU_CTRL_BASE..=HW_CPU_CTRL_BASE + 0x03FF).contains(&offset) {
-            match offset & 0xFF {
-                0x10 => Some(ControlRegister::TimerCounter),
-                0x11 => Some(ControlRegister::TimerControl),
-                0x12 => Some(ControlRegister::IrqMask),
-                0x13 => Some(ControlRegister::IrqStatus),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Map a $FF00-$FF7F address to the I/O page offset.
-    ///
-    fn mpr_index_for_addr(addr: u16) -> Option<usize> {
-        if !(0xFF80..=0xFFBF).contains(&addr) {
-            return None;
-        }
-        let offset = (addr - 0xFF80) as usize;
-        Some(offset & 0x07)
     }
 
     fn enqueue_audio_samples(&mut self, phi_cycles: u32) {
@@ -1305,259 +1192,6 @@ impl Bus {
         None
     }
 
-    fn resolve(&self, addr: u16) -> (BankMapping, usize) {
-        let index = (addr as usize) >> 13;
-        let offset = (addr as usize) & (PAGE_SIZE - 1);
-        (self.banks[index], offset)
-    }
-
-    fn update_mpr(&mut self, bank: usize) {
-        let value = self.mpr[bank];
-        let rom_pages = self.rom_pages();
-        let cart_pages = self.cart_ram_pages();
-        let mapping = match value {
-            0xFF => BankMapping::Hardware,
-            BRAM_PAGE => BankMapping::Bram,
-            0xF8..=0xFD => {
-                let ram_pages = self.total_ram_pages().max(1);
-                let logical = (value - 0xF8) as usize % ram_pages;
-                BankMapping::Ram {
-                    base: logical * PAGE_SIZE,
-                }
-            }
-            _ => {
-                let logical = value as usize;
-                if cart_pages > 0 && value >= 0x80 {
-                    let cart_page = (logical - 0x80) % cart_pages.max(1);
-                    BankMapping::CartRam {
-                        base: cart_page * PAGE_SIZE,
-                    }
-                } else if rom_pages > 0 {
-                    let rom_page = Self::mirror_rom_bank(logical, rom_pages);
-                    BankMapping::Rom {
-                        base: rom_page * PAGE_SIZE,
-                    }
-                } else {
-                    BankMapping::Ram { base: 0 }
-                }
-            }
-        };
-        let mapping = if bank == 1 && Self::env_force_mpr1_hardware() {
-            BankMapping::Hardware
-        } else {
-            mapping
-        };
-        self.banks[bank] = mapping;
-    }
-
-    fn total_ram_pages(&self) -> usize {
-        (self.ram.len() / PAGE_SIZE).max(1)
-    }
-
-    fn rom_pages(&self) -> usize {
-        self.rom.len() / PAGE_SIZE
-    }
-
-    /// Map a logical ROM bank number to a physical ROM page, handling
-    /// mirroring for non-power-of-2 ROM sizes.
-    ///
-    /// For power-of-2 ROMs, simple modulo works.  For non-power-of-2 (e.g.
-    /// 384 KB = 48 banks), the PC Engine hardware splits the 128-bank
-    /// address space in half:
-    ///   Banks  0-63  → lower power-of-2 portion (e.g. 32 banks = 256 KB)
-    ///   Banks 64-127 → upper remainder        (e.g. 16 banks = 128 KB)
-    /// Each half mirrors within its own range.  Confirmed by Mednafen's
-    /// pce/huc.cpp for the m_len == 0x60000 case.
-    fn mirror_rom_bank(logical: usize, rom_pages: usize) -> usize {
-        if rom_pages == 0 {
-            return 0;
-        }
-        if rom_pages.is_power_of_two() {
-            return logical % rom_pages;
-        }
-        // Largest power-of-2 that fits inside rom_pages.
-        let lower = rom_pages.next_power_of_two() >> 1; // e.g. 32 for 48, 64 for 96
-        let upper = rom_pages - lower; // e.g. 16 for 48, 32 for 96
-
-        // Mask to 7-bit bank number (128 banks = 1 MB address space).
-        // The 128-bank space is always split at the midpoint (bank 64):
-        //   Banks  0-63  → lower portion (mirrored within `lower` pages)
-        //   Banks 64-127 → upper portion (mirrored within `upper` pages)
-        let bank = logical & 0x7F;
-        if bank < 64 {
-            bank % lower.max(1)
-        } else {
-            ((bank - 64) % upper.max(1)) + lower
-        }
-    }
-
-    fn cart_ram_pages(&self) -> usize {
-        self.cart_ram.len() / PAGE_SIZE
-    }
-
-    fn read_bram_byte(&self, offset: usize) -> u8 {
-        if !self.bram_unlocked {
-            return 0xFF;
-        }
-        self.bram.get(offset).copied().unwrap_or(0xFF)
-    }
-
-    fn write_bram_byte(&mut self, offset: usize, value: u8) {
-        if !self.bram_unlocked {
-            return;
-        }
-        if let Some(slot) = self.bram.get_mut(offset) {
-            *slot = value;
-        }
-    }
-
-    fn vdc_port_kind(offset: usize) -> Option<VdcPort> {
-        // VDC is mirrored over the 0x0000–0x03FF IO window. Only A1..A0 select
-        // control/data; A2+ are ignored by the chip. Many HuCARDs stream writes
-        // via 0x2002/0x2003/0x200A/0x200B, so ensure any offset whose low two
-        // bits are 0/1 goes to Control, 2/3 goes to Data.
-        // For debug `PCE_VDC_ULTRA_MIRROR`, widen to the entire hardware page.
-        if Bus::env_vdc_force_hot_ports() && Self::force_map_candidates(offset) {
-            return Some(Self::vdc_port_from_low_bits(offset));
-        }
-        let mirrored = offset & 0x1FFF;
-        let ultra = Self::env_vdc_ultra_mirror();
-        let catchall = Self::env_vdc_catchall();
-        if Self::env_vdc_force_hot_ports() && Self::force_map_candidates(offset) {
-            return Some(Self::vdc_port_from_low_bits(offset));
-        }
-        if !catchall {
-            if !Self::env_extreme_mirror() && !ultra && mirrored >= 0x0400 {
-                return None;
-            }
-            if Self::env_extreme_mirror() && !ultra && mirrored >= 0x1000 {
-                return None;
-            }
-            if ultra && mirrored >= 0x2000 {
-                return None;
-            }
-        }
-        match mirrored & 0x03 {
-            0x00 | 0x01 => Some(VdcPort::Control),
-            0x02 | 0x03 => Some(VdcPort::Data),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    fn vdc_port_from_low_bits(offset: usize) -> VdcPort {
-        if offset & 0x02 != 0 {
-            VdcPort::Data
-        } else {
-            VdcPort::Control
-        }
-    }
-
-    fn force_map_candidates(offset: usize) -> bool {
-        // Small list of hot addresses observed in HuCARD traces (0x2200/2211,
-        // 0x2002/200A, 0x2017..0x201D, 0x0800..) that may mirror VDC ports.
-        const HOT: &[usize] = &[
-            0x0000, 0x0002, 0x0003, 0x0800, 0x0802, 0x0803, 0x0804, 0x0805, 0x0807, 0x2000, 0x2001,
-            0x2002, 0x2003, 0x200A, 0x200B, 0x2010, 0x2011, 0x2012, 0x2016, 0x2017, 0x2018, 0x2019,
-            0x201A, 0x201B, 0x201C, 0x201D, 0x2048, 0x2049, 0x204A, 0x204B, 0x204D, 0x2200, 0x2201,
-            0x2202, 0x2209, 0x220A, 0x220B, 0x220C, 0x220D, 0x220F, 0x2210, 0x2211, 0x2212, 0x2215,
-            0x2217, 0x2219, 0x221A, 0x221D, 0x2220, 0x2226, 0x2227, 0x2228, 0x2229, 0x222A, 0x222B,
-            0x222D, 0x222E, 0x0A3A, 0x0A3B, 0x0A3C, 0x0A3D,
-        ];
-        HOT.iter().any(|&h| (offset & 0x3FFF) == h)
-    }
-
-    #[cfg(feature = "trace_hw_writes")]
-    fn st0_hold_enabled() -> bool {
-        use std::sync::OnceLock;
-        static ENABLED: OnceLock<bool> = OnceLock::new();
-        *ENABLED.get_or_init(|| std::env::var("PCE_TRACE_DISABLE_ST0_HOLD").is_err())
-    }
-
-    fn normalized_io_offset(offset: usize) -> usize {
-        // Optional: fold 0x0200–0x03FF down to 0x0000–0x01FF when debugging
-        // HuCARDs that stream hardware writes through the wider mirror region.
-        if Self::env_fold_io_02xx() && offset >= 0x0200 && offset < 0x0400 {
-            offset & 0x01FF
-        } else {
-            offset
-        }
-    }
-
-    fn read_io_internal(&mut self, raw_offset: usize) -> u8 {
-        // The HuC6280 only decodes A0–A10 for the hardware page; fold everything
-        // into 0x0000–0x1FFF first, then optional 0x0200 folding for debug.
-        let mut offset = raw_offset & 0x1FFF;
-        offset = Self::normalized_io_offset(offset);
-        if Self::env_route_02xx_hw() && offset >= 0x0200 && offset < 0x0220 {
-            offset &= 0x01FF; // map 0x0200–0x021F to 0x0000–0x001F
-        }
-        if let Some(port) = Self::vdc_port_kind(offset) {
-            #[cfg(feature = "trace_hw_writes")]
-            {
-                self.vdc.last_io_addr = offset as u16;
-            }
-            return match port {
-                VdcPort::Control => self.vdc.read_status(),
-                VdcPort::Data => {
-                    let port_index = if offset & 0x01 != 0 { 2 } else { 1 };
-                    self.vdc.read_port(port_index)
-                }
-            };
-        }
-        match offset {
-            0x0400..=0x07FF | 0x1C40..=0x1C47 => {
-                let sub = (offset & 0x0007) as u16;
-                self.read_vce_port(sub)
-            }
-            // HuC6280 PSG native map is direct registers at $0800-$080F.
-            0x0800..=0x0BFF => self.psg.read_direct(offset & 0x0F),
-            // Keep legacy 4-port mirror behavior for older tests/tooling.
-            0x1C60..=0x1C63 => match offset & 0x03 {
-                0x00 => self.psg.read_address(),
-                0x01 => self.io[offset],
-                0x02 => self.psg.read_data(),
-                _ => self.psg.read_status(),
-            },
-            0x0C00..=0x0FFF => {
-                if let Some(value) = self.read_control_register(offset) {
-                    value
-                } else {
-                    self.io[offset]
-                }
-            }
-            0x1000..=0x13FF => {
-                if let Some(value) = self.io_port.read(offset - HW_JOYPAD_BASE) {
-                    value
-                } else {
-                    self.io[offset]
-                }
-            }
-            0x1400..=0x17FF | 0x1C10..=0x1C13 => {
-                if let Some(value) = self.read_control_register(offset) {
-                    value
-                } else {
-                    self.io[offset]
-                }
-            }
-            0x1800..=0x1BFF => match offset {
-                BRAM_LOCK_PORT => {
-                    self.bram_unlocked = false;
-                    self.io[offset]
-                }
-                _ => self.io[offset],
-            },
-            0x1C00..=0x1FFF => {
-                if let Some(value) = self.read_control_register(offset) {
-                    value
-                } else {
-                    self.io[offset]
-                }
-            }
-            _ => self.io[offset],
-        }
-    }
-
     #[inline]
     pub fn stack_read(&self, addr: u16) -> u8 {
         let index = addr as usize;
@@ -1588,113 +1222,9 @@ impl Bus {
         }
     }
 
-    fn write_io_internal(&mut self, raw_offset: usize, value: u8) {
-        // Fold to 0x0000–0x1FFF to mirror HuC6280 hardware page decode.
-        let mut offset = raw_offset & 0x1FFF;
-        offset = Self::normalized_io_offset(offset);
-        if Self::env_route_02xx_hw() && offset >= 0x0200 && offset < 0x0220 {
-            offset &= 0x01FF; // map 0x0200–0x021F to 0x0000–0x001F
-        }
-        if let Some(port) = Self::vdc_port_kind(offset) {
-            #[cfg(feature = "trace_hw_writes")]
-            {
-                self.vdc.last_io_addr = offset as u16;
-            }
-            match port {
-                VdcPort::Control => self.write_st_port(0, value),
-                VdcPort::Data => {
-                    let port_index = if offset & 0x01 != 0 { 2 } else { 1 };
-                    self.write_st_port(port_index, value)
-                }
-            }
-            return;
-        }
-        #[cfg(feature = "trace_hw_writes")]
-        if (offset & 0x1FFF) >= 0x2400 && (offset & 0x1FFF) < 0x2800 {
-            eprintln!(
-                "  IO write HIGH mirror offset {:04X} -> {:02X}",
-                offset, value
-            );
-        }
-        #[cfg(feature = "trace_hw_writes")]
-        if (offset & 0xE000) == 0 && value != 0 {
-            eprintln!("  HW page data write {:04X} -> {:02X}", offset, value);
-        }
-        match offset {
-            // VCE mirrors also appear at 0x1C40–0x1C43 in some docs; treat them the same.
-            0x0400..=0x07FF | 0x1C40..=0x1C47 => {
-                let sub = (offset & 0x0007) as u16;
-                self.write_vce_port(sub, value);
-            }
-            // HuC6280 PSG native map is direct registers at $0800-$080F.
-            0x0800..=0x0BFF => self.psg.write_direct(offset & 0x0F, value),
-            // Keep legacy 4-port mirror behavior for older tests/tooling.
-            0x1C60..=0x1C63 => match offset & 0x03 {
-                0x00 => self.psg.write_address(value),
-                0x01 => self.psg.write_data(value),
-                _ => self.io[offset] = value,
-            },
-            0x0C00..=0x0FFF | 0x1400..=0x17FF | 0x1C10..=0x1C13 => {
-                // Timer/IRQ registers (mirrored)
-                if !self.write_control_register(offset, value) {
-                    self.io[offset] = value;
-                }
-            }
-            0x1000..=0x13FF => {
-                if !self.io_port.write(offset - HW_JOYPAD_BASE, value) {
-                    self.io[offset] = value;
-                }
-            }
-            0x1800..=0x1BFF => {
-                if offset == BRAM_UNLOCK_PORT && (value & 0x80) != 0 {
-                    self.bram_unlocked = true;
-                }
-                self.io[offset] = value;
-            }
-            0x1C00..=0x1FFF => {
-                // Treat as additional mirror for control/TIMER/IRQ/PSG status
-                if (offset & 0x3F) >= 0x40 && (offset & 0x3F) <= 0x43 {
-                    // Mirror of VCE control area? leave as IO
-                    self.io[offset] = value;
-                } else if !self.write_control_register(offset, value) {
-                    self.io[offset] = value;
-                }
-            }
-            _ => {
-                self.io[offset] = value;
-            }
-        }
-    }
-
     #[cfg(feature = "trace_hw_writes")]
     fn cpu_pc_for_trace(&self) -> u16 {
         self.last_pc_for_trace.unwrap_or(0)
-    }
-
-    #[inline]
-    fn read_vce_port(&mut self, addr: u16) -> u8 {
-        match addr & 0x0007 {
-            0x00 => self.vce.read_control_low(),
-            0x01 => self.vce.read_control_high(),
-            0x02 => self.vce.read_address_low(),
-            0x03 => self.vce.read_address_high(),
-            0x04 => self.vce.read_data_low(),
-            0x05 => self.vce.read_data_high(),
-            _ => 0xFF,
-        }
-    }
-
-    #[inline]
-    fn write_vce_port(&mut self, addr: u16, value: u8) {
-        match addr & 0x0007 {
-            0x00 => self.vce.write_control_low(value),
-            0x01 => self.vce.write_control_high(value),
-            0x02 => self.vce.write_address_low(value),
-            0x03 => self.vce.write_address_high(value),
-            0x04 => self.vce.write_data_low(value),
-            0x05 => self.vce.write_data_high(value),
-            _ => {}
-        }
     }
 
     fn refresh_vdc_irq(&mut self) {
@@ -1702,7 +1232,7 @@ impl Bus {
         #[cfg(debug_assertions)]
         {
             const FORCE_AFTER_WRITES: u64 = 5_000;
-            if self.debug_force_ds_after >= FORCE_AFTER_WRITES {
+            if *self.debug_force_ds_after >= FORCE_AFTER_WRITES {
                 self.vdc.raise_status(VDC_STATUS_DS | VDC_STATUS_DV);
             }
         }
@@ -1820,175 +1350,6 @@ impl Bus {
             mask |= IRQ_REQUEST_TIMER;
         }
         mask
-    }
-}
-
-#[derive(Clone, Copy, Debug, bincode::Encode, bincode::Decode)]
-enum BankMapping {
-    Ram { base: usize },
-    Rom { base: usize },
-    CartRam { base: usize },
-    Bram,
-    Hardware,
-}
-
-#[derive(Clone, Copy, bincode::Encode, bincode::Decode)]
-enum ControlRegister {
-    TimerCounter,
-    TimerControl,
-    IrqMask,
-    IrqStatus,
-}
-
-#[derive(Clone, Copy, bincode::Encode, bincode::Decode)]
-struct IoPort {
-    output: u8,
-    direction: u8,
-    enable: u8,
-    select: u8,
-    input: u8,
-}
-
-#[derive(Clone, Copy, bincode::Encode, bincode::Decode)]
-struct Timer {
-    reload: u8,
-    counter: u8,
-    prescaler: u32,
-    enabled: bool,
-}
-
-// PSG constants and types are defined in src/psg.rs
-// Psg is defined in src/psg.rs
-
-// Vce is defined in src/vce.rs
-
-impl Timer {
-    fn new() -> Self {
-        Self {
-            reload: 0,
-            counter: 0,
-            prescaler: 0,
-            enabled: false,
-        }
-    }
-
-    fn reset(&mut self) {
-        *self = Self::new();
-    }
-
-    fn write_reload(&mut self, value: u8) {
-        self.reload = value & 0x7F;
-    }
-
-    fn read_counter(&self) -> u8 {
-        self.counter & 0x7F
-    }
-
-    fn write_control(&mut self, value: u8) {
-        let start = value & TIMER_CONTROL_START != 0;
-        if start && !self.enabled {
-            self.enabled = true;
-            self.counter = self.reload;
-            self.prescaler = 0;
-        } else if !start {
-            self.enabled = false;
-        }
-    }
-
-    fn control(&self) -> u8 {
-        if self.enabled { TIMER_CONTROL_START } else { 0 }
-    }
-
-    fn tick(&mut self, cycles: u32, high_speed: bool) -> bool {
-        if !self.enabled {
-            return false;
-        }
-
-        let divider = if high_speed { 1024 } else { 256 };
-        self.prescaler += cycles;
-        let mut fired = false;
-
-        while self.prescaler >= divider as u32 {
-            self.prescaler -= divider as u32;
-            if self.counter == 0 {
-                self.counter = self.reload;
-                fired = true;
-            } else {
-                self.counter = self.counter.wrapping_sub(1) & 0x7F;
-            }
-        }
-
-        fired
-    }
-}
-
-impl IoPort {
-    fn new() -> Self {
-        Self {
-            output: 0,
-            direction: 0,
-            enable: 0,
-            select: 0,
-            input: 0xFF,
-        }
-    }
-
-    fn reset(&mut self) {
-        *self = Self::new();
-    }
-
-    fn read(&self, offset: usize) -> Option<u8> {
-        match offset & 0x03FF {
-            0x0000 => Some(self.read_joypad_data()),
-            0x0002 => Some(self.direction),
-            0x0004 => Some(self.input),
-            0x0005 => Some(self.enable),
-            0x0006 => Some(self.select),
-            _ => None,
-        }
-    }
-
-    fn write(&mut self, offset: usize, value: u8) -> bool {
-        match offset & 0x03FF {
-            0x0000 => {
-                self.output = value;
-                // CLR low resets the 6-pad scan index on hardware.
-                if value & 0x02 == 0 {
-                    self.select = 0;
-                }
-                true
-            }
-            0x0002 => {
-                self.direction = value;
-                true
-            }
-            0x0004 => {
-                self.input = value;
-                true
-            }
-            0x0005 => {
-                self.enable = value;
-                true
-            }
-            0x0006 => {
-                self.select = value;
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn read_joypad_data(&self) -> u8 {
-        // PC Engine joypad reads one nibble at a time.
-        // SEL=1 -> d-pad nibble (lower 4 bits of input)
-        // SEL=0 -> button nibble (upper 4 bits of input)
-        let sel = (self.output & 0x01) != 0;
-        let nibble = if sel {
-            self.input & 0x0F // d-pad: Up(0) Right(1) Down(2) Left(3)
-        } else {
-            (self.input >> 4) & 0x0F // buttons: I(0) II(1) Sel(2) Run(3)
-        };
-        0xF0 | nibble
     }
 }
 
