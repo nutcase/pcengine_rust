@@ -29,6 +29,8 @@ const MAX_STEPS_AFTER_FRAME: usize = 30_000;
 const MAX_PRESENT_INTERVAL: Duration = Duration::from_millis(33);
 const PANEL_WIDTH_DEFAULT: f32 = 420.0;
 const PANEL_WIDTH_MIN: f32 = 300.0;
+const AUTO_FIRE_HZ: u128 = 22;
+const AUTO_FIRE_PERIOD_NS: u128 = 1_000_000_000u128 / AUTO_FIRE_HZ;
 
 fn main() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
@@ -108,6 +110,7 @@ fn main() -> Result<(), String> {
     let mut frame_buf_ready = false;
     let mut last_present = Instant::now();
     let mut hud_toast: Option<HudToast> = None;
+    let auto_fire_epoch = Instant::now();
 
     let mut game_renderer = GlGameRenderer::new();
     let mut cheat_ui = CheatToolUi::new();
@@ -237,7 +240,12 @@ fn main() -> Result<(), String> {
         }
 
         // Emulation tick (audio-driven) — skip when paused
-        let pad_state = build_pad_state(&pressed);
+        let auto_fire_on = auto_fire_phase_on(auto_fire_epoch, Instant::now());
+        let button_i_pressed =
+            pressed.contains(&Keycode::Z) || (pressed.contains(&Keycode::A) && auto_fire_on);
+        let button_ii_pressed =
+            pressed.contains(&Keycode::X) || (pressed.contains(&Keycode::S) && auto_fire_on);
+        let pad_state = build_pad_state(&pressed, button_i_pressed, button_ii_pressed);
         emulator.bus.set_joypad_input(pad_state);
 
         let mut steps = 0usize;
@@ -415,7 +423,11 @@ fn queue_audio_samples(device: &AudioQueue<i16>, samples: &[i16]) -> Result<(), 
     }
 }
 
-fn build_pad_state(pressed: &HashSet<Keycode>) -> u8 {
+fn build_pad_state(
+    pressed: &HashSet<Keycode>,
+    button_i_pressed: bool,
+    button_ii_pressed: bool,
+) -> u8 {
     let mut state: u8 = 0xFF;
     let mut clear = |bit: u8| state &= !(1 << bit);
     if pressed.contains(&Keycode::Up) {
@@ -430,10 +442,10 @@ fn build_pad_state(pressed: &HashSet<Keycode>) -> u8 {
     if pressed.contains(&Keycode::Left) {
         clear(3);
     }
-    if pressed.contains(&Keycode::Z) {
+    if button_i_pressed {
         clear(4);
     }
-    if pressed.contains(&Keycode::X) {
+    if button_ii_pressed {
         clear(5);
     }
     if pressed.contains(&Keycode::LShift) || pressed.contains(&Keycode::RShift) {
@@ -443,6 +455,12 @@ fn build_pad_state(pressed: &HashSet<Keycode>) -> u8 {
         clear(7);
     }
     state
+}
+
+fn auto_fire_phase_on(epoch: Instant, now: Instant) -> bool {
+    let elapsed_ns = now.duration_since(epoch).as_nanos();
+    let phase = elapsed_ns % AUTO_FIRE_PERIOD_NS;
+    phase < (AUTO_FIRE_PERIOD_NS / 2)
 }
 
 fn state_slot_from_keycode(code: Keycode) -> Option<usize> {

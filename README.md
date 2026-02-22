@@ -44,6 +44,7 @@ cargo run --example audio_sdl --features audio-sdl -- roms/<game>.pce
 Controls in `video_sdl`:
 - D-pad: arrow keys
 - Button I / II: `Z` / `X`
+- Rapid fire (about 22 shots/sec): `A` (I), `S` (II)
 - Select: `Shift`
 - Run: `Enter` or `Space`
 - Save state: `Ctrl + 0..9`
