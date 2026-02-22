@@ -152,3 +152,28 @@ fn wai_unblocks_when_timer_irq_fires() {
 
     assert!(emu.bus.read(0x4000) > 0);
 }
+
+#[test]
+fn load_state_accepts_legacy_truncated_payload() {
+    let mut emu = Emulator::new();
+    let program = [0xA9, 0x42, 0x00];
+    emu.load_program(0xC000, &program);
+    emu.reset();
+    emu.run_until_halt(Some(32));
+
+    let mut bytes = bincode::encode_to_vec(&emu, bincode::config::standard()).unwrap();
+    bytes.pop();
+
+    let path = std::env::temp_dir().join(format!(
+        "pce_legacy_state_{}_{}.state",
+        std::process::id(),
+        emu.cycles()
+    ));
+    std::fs::write(&path, &bytes).unwrap();
+
+    let mut restored = Emulator::new();
+    let load_result = restored.load_state_from_file(&path);
+    let _ = std::fs::remove_file(&path);
+
+    assert!(load_result.is_ok(), "legacy-compatible load should succeed");
+}

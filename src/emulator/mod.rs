@@ -151,9 +151,23 @@ impl Emulator {
         path: P,
     ) -> Result<(), Box<dyn Error>> {
         let bytes = std::fs::read(path)?;
-        let (mut state, _): (Emulator, usize) =
-            bincode::decode_from_slice(&bytes, bincode::config::standard())?;
+        let config = bincode::config::standard();
+        let (mut state, _): (Emulator, usize) = match bincode::decode_from_slice(&bytes, config) {
+            Ok(decoded) => decoded,
+            Err(bincode::error::DecodeError::UnexpectedEnd { additional }) => {
+                // Backward-compatibility path for older state files that are
+                // short by a few bytes after struct layout changes.
+                let mut padded = bytes.clone();
+                let extra = additional.saturating_add(64);
+                padded.resize(padded.len().saturating_add(extra), 0);
+                bincode::decode_from_slice(&padded, config)?
+            }
+            Err(err) => return Err(Box::new(err)),
+        };
         // Keep front-end configured batch size and discard stale queued audio.
+        // Recompute bank mappings from MPRs so legacy enum-tag differences in
+        // serialized `BankMapping` do not affect restored state.
+        state.bus.rebuild_mpr_mappings();
         state.audio_batch_size = self.audio_batch_size;
         state.audio_buffer.clear();
         let _ = state.bus.take_audio_samples();
