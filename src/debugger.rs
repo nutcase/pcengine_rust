@@ -60,7 +60,7 @@ impl Debugger {
         }
     }
 
-    pub(crate) fn step_pending(&self) -> bool {
+    pub fn step_pending(&self) -> bool {
         self.step_pending
     }
 

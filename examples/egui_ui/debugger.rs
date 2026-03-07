@@ -209,7 +209,8 @@ impl VramViewer {
         tile_count: usize,
     ) {
         let (w, h) = self.render_tiles(vram, palette_rgb, tile_count);
-        self.update_texture(ui, &self.rgba, w, h);
+        let pixels = self.rgba.clone();
+        self.update_texture(ui, &pixels, w, h);
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
