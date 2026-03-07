@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, unused_assignments, unused_comparisons)]
 /// Diagnose why the title screen music is slow.
 /// Track CPU speed mode (CSL/CSH), timer rate, and music tempo counter.
 use pce::emulator::Emulator;

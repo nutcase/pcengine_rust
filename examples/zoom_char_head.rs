@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, unused_assignments, unused_comparisons)]
 /// Zoom into the character's head area to diagnose the split.
 use pce::emulator::Emulator;
 use std::error::Error;

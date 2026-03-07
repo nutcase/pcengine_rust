@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, unused_assignments, unused_comparisons)]
 use pce::emulator::Emulator;
 use sdl2::audio::{AudioCallback, AudioSpecDesired, AudioStatus};
 use std::collections::VecDeque;

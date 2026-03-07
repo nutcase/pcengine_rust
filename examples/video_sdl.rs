@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, unused_assignments, unused_comparisons)]
 #[path = "common/config.rs"]
 mod config;
 #[path = "common/hud_toast.rs"]

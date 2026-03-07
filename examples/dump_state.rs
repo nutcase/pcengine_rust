@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, unused_assignments, unused_comparisons)]
 use pce::{bus::Bus, emulator::Emulator};
 use std::{collections::BTreeMap, env, error::Error, fs, path::Path};
 

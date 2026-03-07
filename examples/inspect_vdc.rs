@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, unused_assignments, unused_comparisons)]
 /// Inspect VDC registers and VRAM tile data after loading a Power League III save state.
 /// Designed to help diagnose visual noise on the baseball field.
 use pce::emulator::Emulator;

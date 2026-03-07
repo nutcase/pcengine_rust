@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, unused_assignments, unused_comparisons)]
 use pce::bus::{VDC_STATUS_DS, VDC_STATUS_RCR, VDC_STATUS_VBL};
 use pce::emulator::Emulator;
 use std::error::Error;

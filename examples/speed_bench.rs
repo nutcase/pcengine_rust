@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, unused_assignments, unused_comparisons)]
 /// Benchmark raw emulation speed (no diagnostics overhead).
 use pce::emulator::Emulator;
 use std::error::Error;

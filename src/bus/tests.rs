@@ -13,9 +13,13 @@ const VCE_ADDRESS_ADDR: u16 = 0x0402;
 const VCE_ADDRESS_HIGH_ADDR: u16 = 0x0403;
 const VCE_DATA_ADDR: u16 = 0x0404;
 const VCE_DATA_HIGH_ADDR: u16 = 0x0405;
+#[allow(dead_code)]
 const PSG_ADDR_REG: u16 = 0x1C60;
+#[allow(dead_code)]
 const PSG_WRITE_REG: u16 = 0x1C61;
+#[allow(dead_code)]
 const PSG_READ_REG: u16 = 0x1C62;
+#[allow(dead_code)]
 const PSG_STATUS_REG: u16 = 0x1C63;
 const TIMER_STD_BASE: u16 = 0x0C00;
 const JOYPAD_BASE_ADDR: u16 = 0x1000;
