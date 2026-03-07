@@ -59,6 +59,47 @@ State files are persisted under `states/<rom_name>.slotN.state`.
 `pc_engine`（ゲーム画面+チートパネル）では、ゲーム操作中は SDL テキスト入力を停止し、
 チートパネル入力は ASCII のみ受け付けます（IME 合成入力は無効）。
 
+`pc_engine` のデバッガータブ:
+- Pause/Run: 実行の停止/再開
+- Step: 1命令ステップ実行
+- Breakpoints: PC アドレス (`$C000` 形式) で追加/削除
+- VRAM Viewer: 8x8 タイルの先頭 512 枚を表示（Refresh/Auto）
+
+### Config (`pce_config.json`)
+`video_sdl` と `pc_engine` は `--config path.json` で JSON 設定を読み込みます。
+カレントディレクトリに `pce_config.json` があれば自動で読み込みます。
+
+```json
+{
+  "window_scale": 3,
+  "panel_width": 420,
+  "input": {
+    "up": "Up",
+    "down": "Down",
+    "left": "Left",
+    "right": "Right",
+    "button_i": "Z",
+    "button_ii": "X",
+    "rapid_i": "A",
+    "rapid_ii": "S",
+    "select": "LShift",
+    "run": "Return"
+  },
+  "performance": {
+    "audio_batch": 512,
+    "emu_audio_batch": 128,
+    "audio_queue_min": 1024,
+    "audio_queue_target": 2048,
+    "audio_queue_max": 3072,
+    "audio_queue_critical": 512,
+    "max_emu_steps_per_pump": 120000,
+    "max_steps_after_frame": 30000,
+    "max_present_interval_ms": 33,
+    "auto_fire_hz": 22
+  }
+}
+```
+
 ## Build Notes
 - `sdl2` is built with the `bundled` feature.
 - This repo includes `.cargo/config.toml` with:
@@ -77,7 +118,7 @@ cargo run --example trace_boot -- roms/<game>.pce
 ## Known Limitations
 - Audio timing/mixing is still being tuned; BGM tempo stability and residual noise are under active investigation.
 - Some VDC edge cases (exact per-line behaviour and game-specific quirks) are still being refined.
-- CD-ROM subsystem and debugger UI are not implemented yet.
+- CD-ROM subsystem is not implemented yet.
 
 See `TODO.md` for the detailed roadmap and current priorities.
 

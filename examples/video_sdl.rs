@@ -1,6 +1,9 @@
+#[path = "common/config.rs"]
+mod config;
 #[path = "common/hud_toast.rs"]
 mod hud_toast;
 
+use config::{AppConfig, ParsedBindings};
 use hud_toast::{HudToast, draw_hud_toast, show_hud_toast};
 use pce::emulator::Emulator;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
@@ -12,25 +15,25 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-const SCALE: u32 = 3;
-const AUDIO_BATCH: usize = 512;
-const EMU_AUDIO_BATCH: usize = 128;
-const AUDIO_QUEUE_MIN: usize = AUDIO_BATCH * 2;
-const AUDIO_QUEUE_TARGET: usize = AUDIO_BATCH * 4;
-const AUDIO_QUEUE_MAX: usize = AUDIO_BATCH * 6;
-const AUDIO_QUEUE_CRITICAL: usize = AUDIO_BATCH;
-const MAX_EMU_STEPS_PER_PUMP: usize = 120_000;
-const MAX_STEPS_AFTER_FRAME: usize = 30_000;
-const MAX_PRESENT_INTERVAL: Duration = Duration::from_millis(33);
-const AUTO_FIRE_HZ: u128 = 22;
-const AUTO_FIRE_PERIOD_NS: u128 = 1_000_000_000u128 / AUTO_FIRE_HZ;
 fn main() -> Result<(), String> {
-    let mut args = std::env::args().skip(1);
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let (config_path, args) = config::parse_config_path(&raw_args);
+    let mut args = args.into_iter();
     let rom_path = args
         .next()
-        .ok_or_else(|| "usage: video_sdl <rom.[bin|pce]>".to_string())?;
+        .ok_or_else(|| "usage: video_sdl <rom.[bin|pce]> [--config path.json]".to_string())?;
     let rom = std::fs::read(&rom_path)
         .map_err(|err| format!("failed to read ROM {}: {err}", rom_path))?;
+
+    let config_path = config_path.map(std::path::PathBuf::from).or_else(|| {
+        let path = std::path::PathBuf::from("pce_config.json");
+        path.exists().then_some(path)
+    });
+    let config = AppConfig::load(config_path.as_deref());
+    let perf = &config.performance;
+    let bindings = ParsedBindings::from_input(&config.input)
+        .ok_or_else(|| "invalid key binding in config".to_string())?;
+    let auto_fire_period_ns = 1_000_000_000u128 / perf.auto_fire_hz.max(1);
 
     let mut emulator = Emulator::new();
     let is_pce = Path::new(&rom_path)
@@ -44,7 +47,7 @@ fn main() -> Result<(), String> {
     } else {
         emulator.load_program(0xC000, &rom);
     }
-    emulator.set_audio_batch_size(EMU_AUDIO_BATCH);
+    emulator.set_audio_batch_size(perf.emu_audio_batch);
     emulator.reset();
 
     let mut current_width = emulator.display_width();
@@ -52,7 +55,7 @@ fn main() -> Result<(), String> {
 
     // PC Engine outputs to a 4:3 CRT regardless of dot clock / pixel count.
     // Window size is always 4:3, with height as reference.
-    let win_h = (current_height as u32) * SCALE;
+    let win_h = (current_height as u32) * config.window_scale;
     let win_w = win_h * 4 / 3;
 
     let sdl = sdl2::init().map_err(|e| e.to_string())?;
@@ -82,7 +85,7 @@ fn main() -> Result<(), String> {
     let desired_audio = AudioSpecDesired {
         freq: Some(44_100),
         channels: Some(1),
-        samples: Some(AUDIO_BATCH as u16),
+        samples: Some(perf.audio_batch as u16),
     };
     let audio_device = audio
         .open_queue::<i16, _>(None, &desired_audio)
@@ -96,6 +99,7 @@ fn main() -> Result<(), String> {
     let mut last_present = Instant::now();
     let mut hud_toast: Option<HudToast> = None;
     let auto_fire_epoch = Instant::now();
+    let bound_keys = bindings.to_set();
 
     while !quit {
         for event in event_pump.poll_iter() {
@@ -140,7 +144,7 @@ fn main() -> Result<(), String> {
                         } else {
                             match emulator.load_state_from_file(&state_path) {
                                 Ok(()) => {
-                                    emulator.set_audio_batch_size(EMU_AUDIO_BATCH);
+                                    emulator.set_audio_batch_size(perf.emu_audio_batch);
                                     audio_device.clear();
                                     latest_frame = None;
                                     last_present = Instant::now();
@@ -161,7 +165,7 @@ fn main() -> Result<(), String> {
                                 }
                             }
                         }
-                    } else {
+                    } else if bound_keys.contains(&code) {
                         pressed.insert(code);
                     }
                 }
@@ -176,27 +180,29 @@ fn main() -> Result<(), String> {
             }
         }
 
-        let auto_fire_on = auto_fire_phase_on(auto_fire_epoch, Instant::now());
-        let button_i_pressed =
-            pressed.contains(&Keycode::Z) || (pressed.contains(&Keycode::A) && auto_fire_on);
-        let button_ii_pressed =
-            pressed.contains(&Keycode::X) || (pressed.contains(&Keycode::S) && auto_fire_on);
-        let pad_state = build_pad_state(&pressed, button_i_pressed, button_ii_pressed);
+        let auto_fire_on = auto_fire_phase_on(auto_fire_epoch, Instant::now(), auto_fire_period_ns);
+        let button_i_pressed = pressed.contains(&bindings.button_i)
+            || (pressed.contains(&bindings.rapid_i) && auto_fire_on);
+        let button_ii_pressed = pressed.contains(&bindings.button_ii)
+            || (pressed.contains(&bindings.rapid_ii) && auto_fire_on);
+        let pad_state = build_pad_state(&pressed, &bindings, button_i_pressed, button_ii_pressed);
         emulator.bus.set_joypad_input(pad_state);
 
         let mut steps = 0usize;
         let mut frame_seen = false;
-        while queued_samples(&audio_device) < AUDIO_QUEUE_TARGET && steps < MAX_EMU_STEPS_PER_PUMP {
+        while queued_samples(&audio_device) < perf.audio_queue_target
+            && steps < perf.max_emu_steps_per_pump
+        {
             emulator.tick();
             steps += 1;
             if let Some(samples) = emulator.take_audio_samples() {
-                queue_audio_samples(&audio_device, &samples)?;
+                queue_audio_samples(&audio_device, &samples, perf.audio_queue_max)?;
             }
             if let Some(frame) = emulator.take_frame() {
                 latest_frame = Some(frame);
                 frame_seen = true;
             }
-            if frame_seen && steps >= MAX_STEPS_AFTER_FRAME {
+            if frame_seen && steps >= perf.max_steps_after_frame {
                 // Keep window updates responsive even if queue size reporting is unstable.
                 break;
             }
@@ -208,7 +214,7 @@ fn main() -> Result<(), String> {
         if new_width != current_width || new_height != current_height {
             current_width = new_width;
             current_height = new_height;
-            let h = (current_height as u32) * SCALE;
+            let h = (current_height as u32) * config.window_scale;
             let w = h * 4 / 3;
             canvas
                 .window_mut()
@@ -224,8 +230,8 @@ fn main() -> Result<(), String> {
         }
 
         let queued = queued_samples(&audio_device);
-        let should_present =
-            queued >= AUDIO_QUEUE_CRITICAL || last_present.elapsed() >= MAX_PRESENT_INTERVAL;
+        let should_present = queued >= perf.audio_queue_critical
+            || last_present.elapsed() >= Duration::from_millis(perf.max_present_interval_ms);
         if should_present {
             if let Some(frame) = latest_frame.take() {
                 let mut frame = frame;
@@ -240,9 +246,9 @@ fn main() -> Result<(), String> {
                 last_present = Instant::now();
             }
         }
-        if queued < AUDIO_QUEUE_MIN {
+        if queued < perf.audio_queue_min {
             std::thread::yield_now();
-        } else if queued > AUDIO_QUEUE_TARGET {
+        } else if queued > perf.audio_queue_target {
             // Audio is safely buffered; briefly yield CPU.
             std::thread::sleep(Duration::from_millis(1));
         } else {
@@ -257,8 +263,12 @@ fn queued_samples(device: &AudioQueue<i16>) -> usize {
     device.size() as usize / std::mem::size_of::<i16>()
 }
 
-fn queue_audio_samples(device: &AudioQueue<i16>, samples: &[i16]) -> Result<(), String> {
-    let available = AUDIO_QUEUE_MAX.saturating_sub(queued_samples(device));
+fn queue_audio_samples(
+    device: &AudioQueue<i16>,
+    samples: &[i16],
+    audio_queue_max: usize,
+) -> Result<(), String> {
+    let available = audio_queue_max.saturating_sub(queued_samples(device));
     if available == 0 {
         return Ok(());
     }
@@ -294,6 +304,7 @@ fn update_texture(
 
 fn build_pad_state(
     pressed: &HashSet<Keycode>,
+    bindings: &ParsedBindings,
     button_i_pressed: bool,
     button_ii_pressed: bool,
 ) -> u8 {
@@ -301,16 +312,16 @@ fn build_pad_state(
     // Active-low bits. Lower nibble = d-pad, upper nibble = buttons.
     let mut clear = |bit: u8| state &= !(1 << bit);
     // D-pad (lower nibble, returned when SEL=1)
-    if pressed.contains(&Keycode::Up) {
+    if pressed.contains(&bindings.up) {
         clear(0);
     }
-    if pressed.contains(&Keycode::Right) {
+    if pressed.contains(&bindings.right) {
         clear(1);
     }
-    if pressed.contains(&Keycode::Down) {
+    if pressed.contains(&bindings.down) {
         clear(2);
     }
-    if pressed.contains(&Keycode::Left) {
+    if pressed.contains(&bindings.left) {
         clear(3);
     }
     // Buttons (upper nibble, returned when SEL=0)
@@ -320,19 +331,19 @@ fn build_pad_state(
     if button_ii_pressed {
         clear(5);
     } // II
-    if pressed.contains(&Keycode::LShift) || pressed.contains(&Keycode::RShift) {
+    if pressed.contains(&bindings.select) {
         clear(6);
     } // Select
-    if pressed.contains(&Keycode::Return) {
+    if pressed.contains(&bindings.run) {
         clear(7);
     } // Run
     state
 }
 
-fn auto_fire_phase_on(epoch: Instant, now: Instant) -> bool {
+fn auto_fire_phase_on(epoch: Instant, now: Instant, period_ns: u128) -> bool {
     let elapsed_ns = now.duration_since(epoch).as_nanos();
-    let phase = elapsed_ns % AUTO_FIRE_PERIOD_NS;
-    phase < (AUTO_FIRE_PERIOD_NS / 2)
+    let phase = elapsed_ns % period_ns;
+    phase < (period_ns / 2)
 }
 
 fn state_slot_from_keycode(code: Keycode) -> Option<usize> {

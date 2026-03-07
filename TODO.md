@@ -48,8 +48,8 @@ Goal: boot and run `roms/Kato-chan & Ken-chan (Japan).pce` with accurate CPU, me
 - [x] Integrate a host front-end (e.g., SDL2) for video/audio/output and controller input.
 
 ## Stage 4 – Tooling & UX
-- [ ] Add debugger hooks (breakpoints, register/memory inspection, VRAM viewer).
-- [ ] Provide config handling for input bindings, scaling, and performance tuning.
+- [x] Add debugger hooks (breakpoints, register/memory inspection, VRAM viewer).
+- [x] Provide config handling for input bindings, scaling, and performance tuning.
 - [ ] Ship basic CI with ROM-independent tests and linting.
 
 ### Current Sprint TODO

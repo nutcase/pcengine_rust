@@ -1,6 +1,7 @@
 pub mod bus;
 pub mod cheat;
 pub mod cpu;
+pub mod debugger;
 pub mod emulator;
 pub(crate) mod psg;
 pub(crate) mod vce;

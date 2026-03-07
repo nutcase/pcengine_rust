@@ -6,6 +6,7 @@ mod tests;
 
 use crate::bus::{Bus, IRQ_REQUEST_TIMER};
 use crate::cpu::Cpu;
+use crate::debugger::{DebugBreak, DebugTick, Debugger};
 use hucard::{ParsedHuCard, RESET_VECTOR_LEGACY, RESET_VECTOR_PRIMARY};
 use std::error::Error;
 
@@ -104,6 +105,31 @@ impl Emulator {
             self.audio_buffer.append(&mut chunk);
         }
         cycles
+    }
+
+    pub fn tick_debugger(&mut self, debugger: &mut Debugger) -> DebugTick {
+        if debugger.paused {
+            return DebugTick::Paused;
+        }
+
+        let pc = self.cpu.pc;
+        if debugger.breakpoints.contains(&pc) {
+            debugger.paused = true;
+            let br = DebugBreak::Breakpoint(pc);
+            debugger.last_break = Some(br);
+            return DebugTick::Break(br);
+        }
+
+        let cycles = self.tick();
+        if debugger.step_pending() {
+            debugger.clear_step_pending();
+            debugger.paused = true;
+            let br = DebugBreak::Step(self.cpu.pc);
+            debugger.last_break = Some(br);
+            DebugTick::Break(br)
+        } else {
+            DebugTick::Ran(cycles)
+        }
     }
 
     pub fn request_irq(&mut self) {

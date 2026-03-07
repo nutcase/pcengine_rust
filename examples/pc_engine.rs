@@ -1,10 +1,15 @@
+#[path = "common/config.rs"]
+mod config;
 mod egui_ui;
 #[path = "common/hud_toast.rs"]
 mod hud_toast;
 
-use egui_ui::CheatToolUi;
+use config::{AppConfig, ParsedBindings};
+use egui_ui::debugger::{CpuSnapshot, DebuggerAction, VdcSnapshot, describe_break};
 use egui_ui::gl_game::GlGameRenderer;
+use egui_ui::{CheatToolUi, DebuggerPanelData};
 use hud_toast::{HudToast, draw_hud_toast, show_hud_toast};
+use pce::debugger::{DebugTick, Debugger};
 use pce::emulator::Emulator;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
@@ -17,28 +22,27 @@ use egui_sdl2_gl::DpiScaling;
 use egui_sdl2_gl::ShaderVersion;
 use egui_sdl2_gl::gl;
 
-const SCALE: u32 = 3;
-const AUDIO_BATCH: usize = 512;
-const EMU_AUDIO_BATCH: usize = 128;
-const AUDIO_QUEUE_MIN: usize = AUDIO_BATCH * 2;
-const AUDIO_QUEUE_TARGET: usize = AUDIO_BATCH * 4;
-const AUDIO_QUEUE_MAX: usize = AUDIO_BATCH * 6;
-const AUDIO_QUEUE_CRITICAL: usize = AUDIO_BATCH;
-const MAX_EMU_STEPS_PER_PUMP: usize = 120_000;
-const MAX_STEPS_AFTER_FRAME: usize = 30_000;
-const MAX_PRESENT_INTERVAL: Duration = Duration::from_millis(33);
-const PANEL_WIDTH_DEFAULT: f32 = 420.0;
 const PANEL_WIDTH_MIN: f32 = 300.0;
-const AUTO_FIRE_HZ: u128 = 22;
-const AUTO_FIRE_PERIOD_NS: u128 = 1_000_000_000u128 / AUTO_FIRE_HZ;
 
 fn main() -> Result<(), String> {
-    let mut args = std::env::args().skip(1);
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let (config_path, args) = config::parse_config_path(&raw_args);
+    let mut args = args.into_iter();
     let rom_path = args
         .next()
-        .ok_or_else(|| "usage: video_sdl_egui <rom.[bin|pce]>".to_string())?;
+        .ok_or_else(|| "usage: video_sdl_egui <rom.[bin|pce]> [--config path.json]".to_string())?;
     let rom = std::fs::read(&rom_path)
         .map_err(|err| format!("failed to read ROM {}: {err}", rom_path))?;
+
+    let config_path = config_path.map(std::path::PathBuf::from).or_else(|| {
+        let path = std::path::PathBuf::from("pce_config.json");
+        path.exists().then_some(path)
+    });
+    let config = AppConfig::load(config_path.as_deref());
+    let perf = &config.performance;
+    let bindings = ParsedBindings::from_input(&config.input)
+        .ok_or_else(|| "invalid key binding in config".to_string())?;
+    let auto_fire_period_ns = 1_000_000_000u128 / perf.auto_fire_hz.max(1);
 
     let mut emulator = Emulator::new();
     let is_pce = Path::new(&rom_path)
@@ -88,12 +92,12 @@ fn main() -> Result<(), String> {
     } else {
         emulator.load_program(0xC000, &rom);
     }
-    emulator.set_audio_batch_size(EMU_AUDIO_BATCH);
+    emulator.set_audio_batch_size(perf.emu_audio_batch);
     emulator.reset();
 
     let mut current_width = emulator.display_width();
     let mut current_height = emulator.display_height();
-    let game_h = (current_height as u32) * SCALE;
+    let game_h = (current_height as u32) * config.window_scale;
     let game_w = game_h * 4 / 3;
 
     let sdl = sdl2::init().map_err(|e| e.to_string())?;
@@ -132,7 +136,7 @@ fn main() -> Result<(), String> {
     let desired_audio = AudioSpecDesired {
         freq: Some(44_100),
         channels: Some(1),
-        samples: Some(AUDIO_BATCH as u16),
+        samples: Some(perf.audio_batch as u16),
     };
     let audio_device = audio_subsystem
         .open_queue::<i16, _>(None, &desired_audio)
@@ -147,11 +151,13 @@ fn main() -> Result<(), String> {
     let mut last_present = Instant::now();
     let mut hud_toast: Option<HudToast> = None;
     let auto_fire_epoch = Instant::now();
+    let bound_keys = bindings.to_set();
 
     let mut game_renderer = GlGameRenderer::new();
     let mut cheat_ui = CheatToolUi::new();
+    let mut debugger = Debugger::new();
     let mut prev_panel_visible = cheat_ui.panel_visible;
-    let mut panel_width_px: u32 = PANEL_WIDTH_DEFAULT as u32;
+    let mut panel_width_px: u32 = config.panel_width.max(PANEL_WIDTH_MIN as u32);
     let text_input = video.text_input();
     let mut text_input_active = false;
     text_input.stop();
@@ -231,7 +237,7 @@ fn main() -> Result<(), String> {
                         } else {
                             match emulator.load_state_from_file(&state_path) {
                                 Ok(()) => {
-                                    emulator.set_audio_batch_size(EMU_AUDIO_BATCH);
+                                    emulator.set_audio_batch_size(perf.emu_audio_batch);
                                     audio_device.clear();
                                     frame_buf_ready = false;
                                     last_present = Instant::now();
@@ -244,7 +250,7 @@ fn main() -> Result<(), String> {
                                 }
                             }
                         }
-                    } else {
+                    } else if bound_keys.contains(&code) {
                         pressed.insert(code);
                     }
                 }
@@ -276,30 +282,40 @@ fn main() -> Result<(), String> {
         }
 
         // Emulation tick (audio-driven) — skip when paused
-        let auto_fire_on = auto_fire_phase_on(auto_fire_epoch, Instant::now());
-        let button_i_pressed =
-            pressed.contains(&Keycode::Z) || (pressed.contains(&Keycode::A) && auto_fire_on);
-        let button_ii_pressed =
-            pressed.contains(&Keycode::X) || (pressed.contains(&Keycode::S) && auto_fire_on);
-        let pad_state = build_pad_state(&pressed, button_i_pressed, button_ii_pressed);
+        let auto_fire_on = auto_fire_phase_on(auto_fire_epoch, Instant::now(), auto_fire_period_ns);
+        let button_i_pressed = pressed.contains(&bindings.button_i)
+            || (pressed.contains(&bindings.rapid_i) && auto_fire_on);
+        let button_ii_pressed = pressed.contains(&bindings.button_ii)
+            || (pressed.contains(&bindings.rapid_ii) && auto_fire_on);
+        let pad_state = build_pad_state(&pressed, &bindings, button_i_pressed, button_ii_pressed);
         emulator.bus.set_joypad_input(pad_state);
 
         let mut steps = 0usize;
         let mut frame_seen = false;
-        if !cheat_ui.paused {
-            while queued_samples(&audio_device) < AUDIO_QUEUE_TARGET
-                && steps < MAX_EMU_STEPS_PER_PUMP
+        let allow_step = debugger.step_pending();
+        let paused = cheat_ui.paused || (debugger.paused && !allow_step);
+        if !paused {
+            while queued_samples(&audio_device) < perf.audio_queue_target
+                && steps < perf.max_emu_steps_per_pump
             {
-                emulator.tick();
+                match emulator.tick_debugger(&mut debugger) {
+                    DebugTick::Ran(_) => {}
+                    DebugTick::Paused => break,
+                    DebugTick::Break(reason) => {
+                        let label = describe_break(reason);
+                        show_hud_toast(&mut hud_toast, label);
+                        break;
+                    }
+                }
                 steps += 1;
                 if let Some(samples) = emulator.take_audio_samples() {
-                    queue_audio_samples(&audio_device, &samples)?;
+                    queue_audio_samples(&audio_device, &samples, perf.audio_queue_max)?;
                 }
                 if emulator.take_frame_into(&mut frame_buf) {
                     frame_buf_ready = true;
                     frame_seen = true;
                 }
-                if frame_seen && steps >= MAX_STEPS_AFTER_FRAME {
+                if frame_seen && steps >= perf.max_steps_after_frame {
                     break;
                 }
             }
@@ -346,8 +362,8 @@ fn main() -> Result<(), String> {
         }
 
         let queued = queued_samples(&audio_device);
-        let should_present =
-            queued >= AUDIO_QUEUE_CRITICAL || last_present.elapsed() >= MAX_PRESENT_INTERVAL;
+        let should_present = queued >= perf.audio_queue_critical
+            || last_present.elapsed() >= Duration::from_millis(perf.max_present_interval_ms);
 
         if should_present {
             let (win_w, win_h) = window.size();
@@ -380,21 +396,44 @@ fn main() -> Result<(), String> {
                 let wram = emulator.work_ram();
                 let cram = emulator.backup_ram();
 
+                let mut debug_action = DebuggerAction::None;
                 let full_output = egui_ctx.run(egui_state.input.take(), |ctx| {
                     let panel_resp = egui::SidePanel::right("cheat_panel")
                         .resizable(true)
                         .min_width(PANEL_WIDTH_MIN)
-                        .default_width(PANEL_WIDTH_DEFAULT)
+                        .default_width(config.panel_width as f32)
                         .show(ctx, |ui| {
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    cheat_ui.show_panel(
+                                    let debug_data = DebuggerPanelData {
+                                        debugger: &debugger,
+                                        cpu: CpuSnapshot {
+                                            pc: emulator.cpu.pc,
+                                            a: emulator.cpu.a,
+                                            x: emulator.cpu.x,
+                                            y: emulator.cpu.y,
+                                            sp: emulator.cpu.sp,
+                                            status: emulator.cpu.status,
+                                            last_opcode: emulator.cpu.last_opcode(),
+                                        },
+                                        vdc: VdcSnapshot {
+                                            status: emulator.bus.vdc_status_bits(),
+                                            scanline: emulator.bus.vdc_current_scanline(),
+                                            in_vblank: emulator.bus.vdc_in_vblank(),
+                                            vram_dma_busy: emulator.bus.vdc_busy_cycles() > 0,
+                                        },
+                                        vram: emulator.bus.vdc_vram(),
+                                        palette_rgb: &|idx| emulator.bus.vce_palette_rgb(idx),
+                                        egui_ctx: ctx,
+                                    };
+                                    debug_action = cheat_ui.show_panel(
                                         ui,
                                         &mut ram_writes,
                                         wram,
                                         cram,
                                         Some(&cheat_path),
+                                        Some(debug_data),
                                     );
                                 });
                         });
@@ -423,15 +462,40 @@ fn main() -> Result<(), String> {
                         wram[addr] = val;
                     }
                 }
+
+                match debug_action {
+                    DebuggerAction::None => {}
+                    DebuggerAction::TogglePause => {
+                        debugger.paused = !debugger.paused;
+                        show_hud_toast(
+                            &mut hud_toast,
+                            if debugger.paused { "PAUSE" } else { "RUN" },
+                        );
+                    }
+                    DebuggerAction::Step => {
+                        debugger.request_step();
+                    }
+                    DebuggerAction::ClearBreak => {
+                        debugger.clear_break();
+                    }
+                    DebuggerAction::AddBreakpoint(pc) => {
+                        debugger.add_breakpoint(pc);
+                        show_hud_toast(&mut hud_toast, format!("BP ${pc:04X}"));
+                    }
+                    DebuggerAction::RemoveBreakpoint(pc) => {
+                        debugger.remove_breakpoint(pc);
+                        show_hud_toast(&mut hud_toast, format!("BP- ${pc:04X}"));
+                    }
+                }
             }
 
             window.gl_swap_window();
             last_present = Instant::now();
         }
 
-        if queued < AUDIO_QUEUE_MIN {
+        if queued < perf.audio_queue_min {
             std::thread::yield_now();
-        } else if queued > AUDIO_QUEUE_TARGET {
+        } else if queued > perf.audio_queue_target {
             std::thread::sleep(Duration::from_millis(1));
         } else {
             std::thread::yield_now();
@@ -462,8 +526,12 @@ fn queued_samples(device: &AudioQueue<i16>) -> usize {
     device.size() as usize / std::mem::size_of::<i16>()
 }
 
-fn queue_audio_samples(device: &AudioQueue<i16>, samples: &[i16]) -> Result<(), String> {
-    let available = AUDIO_QUEUE_MAX.saturating_sub(queued_samples(device));
+fn queue_audio_samples(
+    device: &AudioQueue<i16>,
+    samples: &[i16],
+    audio_queue_max: usize,
+) -> Result<(), String> {
+    let available = audio_queue_max.saturating_sub(queued_samples(device));
     if available == 0 {
         return Ok(());
     }
@@ -478,21 +546,22 @@ fn queue_audio_samples(device: &AudioQueue<i16>, samples: &[i16]) -> Result<(), 
 
 fn build_pad_state(
     pressed: &HashSet<Keycode>,
+    bindings: &ParsedBindings,
     button_i_pressed: bool,
     button_ii_pressed: bool,
 ) -> u8 {
     let mut state: u8 = 0xFF;
     let mut clear = |bit: u8| state &= !(1 << bit);
-    if pressed.contains(&Keycode::Up) {
+    if pressed.contains(&bindings.up) {
         clear(0);
     }
-    if pressed.contains(&Keycode::Right) {
+    if pressed.contains(&bindings.right) {
         clear(1);
     }
-    if pressed.contains(&Keycode::Down) {
+    if pressed.contains(&bindings.down) {
         clear(2);
     }
-    if pressed.contains(&Keycode::Left) {
+    if pressed.contains(&bindings.left) {
         clear(3);
     }
     if button_i_pressed {
@@ -501,19 +570,19 @@ fn build_pad_state(
     if button_ii_pressed {
         clear(5);
     }
-    if pressed.contains(&Keycode::LShift) || pressed.contains(&Keycode::RShift) {
+    if pressed.contains(&bindings.select) {
         clear(6);
     }
-    if pressed.contains(&Keycode::Return) {
+    if pressed.contains(&bindings.run) {
         clear(7);
     }
     state
 }
 
-fn auto_fire_phase_on(epoch: Instant, now: Instant) -> bool {
+fn auto_fire_phase_on(epoch: Instant, now: Instant, period_ns: u128) -> bool {
     let elapsed_ns = now.duration_since(epoch).as_nanos();
-    let phase = elapsed_ns % AUTO_FIRE_PERIOD_NS;
-    phase < (AUTO_FIRE_PERIOD_NS / 2)
+    let phase = elapsed_ns % period_ns;
+    phase < (period_ns / 2)
 }
 
 fn state_slot_from_keycode(code: Keycode) -> Option<usize> {

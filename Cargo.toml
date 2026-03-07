@@ -6,7 +6,7 @@ edition = "2024"
 [features]
 default = []
 audio-sdl = ["sdl2"]
-video-sdl = ["sdl2"]
+video-sdl = ["sdl2", "serde", "serde_json"]
 cheat-ui = ["sdl2", "egui", "egui_sdl2_gl", "serde", "serde_json"]
 trace_hw_writes = []
 
