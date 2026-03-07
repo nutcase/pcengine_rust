@@ -43,9 +43,9 @@ Goal: boot and run `roms/Kato-chan & Ken-chan (Japan).pce` with accurate CPU, me
   - [x] Honour background zoom registers (per-axis scaling with tests).
   - [x] Model VDC DMA handshakes (SATB auto-transfer DS flag, DCR-driven CRAM uploads with DV/busy timing).
 - [x] Track per-scanline sprite density and raise the OR status flag when more than 16 sprites overlap one scanline (with test coverage).
-- [ ] Integrate framebuffer presentation with SDL, keep video preview toggles in README up to date.
+- [x] Integrate framebuffer presentation with SDL, keep video preview toggles in README up to date.
 - [x] Implement PSG (HuC6280 APU) channels and timers; provide audio mixing interface.
-- [ ] Integrate a host front-end (e.g., SDL2) for video/audio/output and controller input.
+- [x] Integrate a host front-end (e.g., SDL2) for video/audio/output and controller input.
 
 ## Stage 4 – Tooling & UX
 - [ ] Add debugger hooks (breakpoints, register/memory inspection, VRAM viewer).
