@@ -42,9 +42,10 @@ mod mapping;
 mod render;
 mod types;
 
+#[cfg(debug_assertions)]
+use self::types::TransientU64;
 use self::types::{
-    BankMapping, ControlRegister, IoPort, Timer, TransientBool, TransientBram, TransientU64,
-    VdcPort,
+    BankMapping, ControlRegister, IoPort, Timer, TransientBool, TransientBram, VdcPort,
 };
 use font::FONT;
 
