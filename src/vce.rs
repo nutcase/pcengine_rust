@@ -50,27 +50,26 @@ impl Vce {
     }
 
     pub(crate) fn write_control_low(&mut self, value: u8) {
-        self.control = (self.control & 0xFF00) | value as u16;
+        self.control = (self.control & 0xFF00) | (value as u16 & 0x0087);
         self.read_phase = VcePhase::Low;
         self.write_phase = VcePhase::Low;
         #[cfg(feature = "trace_hw_writes")]
         eprintln!("  VCE control low <= {:02X}", value);
     }
 
-    pub(crate) fn write_control_high(&mut self, value: u8) {
-        self.control = ((value as u16) << 8) | (self.control & 0x00FF);
+    pub(crate) fn write_control_high(&mut self, _value: u8) {
         self.read_phase = VcePhase::Low;
         self.write_phase = VcePhase::Low;
         #[cfg(feature = "trace_hw_writes")]
-        eprintln!("  VCE control high <= {:02X}", value);
+        eprintln!("  VCE control high <= {:02X}", _value);
     }
 
     pub(crate) fn read_control_low(&self) -> u8 {
-        (self.control & 0x00FF) as u8
+        0xFF
     }
 
     pub(crate) fn read_control_high(&self) -> u8 {
-        (self.control >> 8) as u8
+        0xFF
     }
 
     pub(crate) fn write_address_low(&mut self, value: u8) {
@@ -90,11 +89,11 @@ impl Vce {
     }
 
     pub(crate) fn read_address_low(&self) -> u8 {
-        (self.address & 0x00FF) as u8
+        0xFF
     }
 
     pub(crate) fn read_address_high(&self) -> u8 {
-        ((self.address >> 8) & 0x01) as u8
+        0xFF
     }
 
     pub(crate) fn write_data_low(&mut self, value: u8) {
@@ -119,8 +118,9 @@ impl Vce {
         // high byte of the current palette entry, preserving the low byte,
         // then auto-increments the address.  No phase tracking.
         let idx = self.index();
+        let high = (value as u16) & 0x01;
         if let Some(slot) = self.palette.get_mut(idx) {
-            *slot = (*slot & 0x00FF) | ((value as u16) << 8);
+            *slot = (*slot & 0x00FF) | (high << 8);
         }
         // Keep latch in sync for reads
         self.data_latch = self.palette.get(idx).copied().unwrap_or(0);
@@ -144,7 +144,7 @@ impl Vce {
         if self.read_phase == VcePhase::Low {
             self.data_latch = self.palette.get(self.index()).copied().unwrap_or(0);
         }
-        let value = (self.data_latch >> 8) as u8;
+        let value = ((self.data_latch >> 8) as u8 & 0x01) | 0xFE;
         self.increment_index();
         self.read_phase = VcePhase::Low;
         value
@@ -153,6 +153,16 @@ impl Vce {
     fn increment_index(&mut self) {
         let next = (self.index() + 1) & 0x01FF;
         self.address = (next as u16) & 0x01FF;
+    }
+
+    pub(crate) fn palette_access_stall_pixels(&self, cpu_high_speed: bool) -> usize {
+        let cpu_master_cycles = if cpu_high_speed { 1usize } else { 4usize };
+        let dot_divider = match self.control & 0x0003 {
+            0x00 => 4usize,
+            0x01 => 3usize,
+            _ => 2usize,
+        };
+        cpu_master_cycles.div_ceil(dot_divider).max(1)
     }
 
     #[inline]

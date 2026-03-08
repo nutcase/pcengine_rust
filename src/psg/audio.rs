@@ -3,12 +3,36 @@ use super::channel::PsgChannel;
 use super::tables::*;
 
 impl Psg {
-    pub(crate) fn generate_sample(&mut self) -> i16 {
+    pub(crate) fn render_host_sample(&mut self, psg_cycles: u32) -> i16 {
+        // A small internal oversample substantially reduces aliasing on
+        // high-frequency tones/noise (notably NF=31 percussion) without
+        // changing the external 44.1 kHz sample rate or save-state format.
+        const OVERSAMPLE: u32 = 2;
+
+        let mut mixed_sum: i64 = 0;
+        let base_cycles = psg_cycles / OVERSAMPLE;
+        let remainder = psg_cycles % OVERSAMPLE;
+
+        for phase in 0..OVERSAMPLE {
+            let cycles = base_cycles + u32::from(phase < remainder);
+            self.clock(cycles);
+            mixed_sum += i64::from(self.mix_current_state());
+        }
+
+        let mixed = (mixed_sum / i64::from(OVERSAMPLE)) as i32;
+        self.finalize_sample(mixed)
+    }
+
+    fn mix_current_state(&self) -> i32 {
         let mut mix: i32 = 0;
         for channel_index in 0..PSG_CHANNEL_COUNT {
             let state = self.channels[channel_index];
             mix += self.sample_channel(channel_index, state);
         }
+        mix
+    }
+
+    fn finalize_sample(&mut self, mix: i32) -> i16 {
         // sample_channel() returns values with 16 fractional bits.
         // Per-channel max = 31 * 65536 = 2,031,616; 6-channel max = 12,189,696.
         // Apply gain and shift: (mix * gain) >> 16.
@@ -123,8 +147,8 @@ impl Psg {
         let vol_r = ((al as u16 + bal_r as u16 + gbal_r as u16).min(0x1F)) as usize;
 
         // Apply logarithmic volume (fixed-point 16.16).
-        // Return with 16 fractional bits intact; generate_sample() shifts after
-        // accumulating all channels and applying the output gain.
+        // Return with 16 fractional bits intact; the final output stage shifts
+        // after accumulating all channels and applying the output gain.
         let left = raw as i64 * db_table[vol_l] as i64;
         let right = raw as i64 * db_table[vol_r] as i64;
         ((left + right) / 2) as i32
@@ -168,11 +192,7 @@ impl Psg {
 #[inline]
 fn tone_divider(period: u16) -> u32 {
     let period = (period & 0x0FFF) as u32;
-    if period == 0 {
-        0x1000 << 1
-    } else {
-        period << 1
-    }
+    if period == 0 { 0x1000 } else { period }
 }
 
 #[inline]
@@ -190,4 +210,32 @@ fn lfo_frequency_scale(value: u8) -> u32 {
 #[inline]
 fn sample_to_signed(sample: u8) -> i32 {
     ((sample & 0x1F) as i32 * 2) - 0x1F
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tone_divider_uses_raw_12bit_frequency_value() {
+        assert_eq!(tone_divider(0x0000), 0x1000);
+        assert_eq!(tone_divider(0x0001), 0x0001);
+        assert_eq!(tone_divider(0x0010), 0x0010);
+        assert_eq!(tone_divider(0x0FFF), 0x0FFF);
+    }
+
+    #[test]
+    fn tone_channel_advances_after_exact_divider_cycles() {
+        let mut psg = Psg::new();
+        let channel = &mut psg.channels[0];
+        channel.frequency = 8;
+        channel.control = PSG_CH_CTRL_KEY_ON | 0x1F;
+        channel.wave_pos = 0;
+
+        psg.clock(7);
+        assert_eq!(psg.channels[0].wave_pos, 0);
+
+        psg.clock(1);
+        assert_eq!(psg.channels[0].wave_pos, 1);
+    }
 }

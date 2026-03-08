@@ -13,6 +13,7 @@ Current focus is correctness-first bring-up using `roms/Kato-chan & Ken-chan (Ja
 - HuCard loader (`.pce`) with optional header handling and initial bank mapping.
 - Backup RAM load/save flow for HuCard runs.
 - Ten no Koe 2 BRAM (2KB) emulation: `MPR=$F7`, lock/unlock via `$1803/$1807`, file persistence.
+  - BRAM loader accepts raw 2KB `.brm` images, blank legacy 2KB images, and 8KB `$F7` page dumps.
 
 ## Quick Start
 Preferred launcher:

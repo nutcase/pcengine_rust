@@ -8,8 +8,6 @@ use super::Bus;
 
 impl Bus {
     pub(crate) fn render_frame_from_vram(&mut self) {
-        let display_width = self.compute_display_width();
-        self.current_display_width = display_width;
         let (display_height, y_offset) = self.compute_display_height();
         self.current_display_height = display_height;
         self.current_display_y_offset = y_offset;
@@ -19,13 +17,40 @@ impl Bus {
         let mut background_line_enabled = [false; FRAME_HEIGHT];
         let mut sprite_line_enabled = [false; FRAME_HEIGHT];
         let mut active_window_line = [false; FRAME_HEIGHT];
+        let mut line_display_starts = [0usize; FRAME_HEIGHT];
+        let mut line_display_widths = [0usize; FRAME_HEIGHT];
+        let mut line_display_end_margins = [0usize; FRAME_HEIGHT];
+        let mut frame_x_offset = FRAME_WIDTH;
+        let mut frame_x_end = 0usize;
         for y in 0..FRAME_HEIGHT {
+            let line_idx = self.vdc.line_state_index_for_frame_row(y);
+            let line_start = self
+                .vdc
+                .display_start_for_line(line_idx)
+                .min(FRAME_WIDTH - 1);
+            let line_end_margin = self.vdc.display_end_margin_for_line(line_idx);
+            let line_width = self
+                .vdc
+                .display_width_for_line(line_idx)
+                .max(1)
+                .min(FRAME_WIDTH.saturating_sub(line_start));
+            line_display_starts[y] = line_start;
+            line_display_widths[y] = line_width;
+            line_display_end_margins[y] =
+                line_end_margin.min(FRAME_WIDTH.saturating_sub(line_start + line_width));
+            if y >= y_offset && y < y_offset.saturating_add(display_height) {
+                frame_x_offset = frame_x_offset.min(line_start);
+                frame_x_end = frame_x_end.max(
+                    line_start
+                        .saturating_add(line_width)
+                        .saturating_add(line_display_end_margins[y]),
+                );
+            }
             let in_active_window = self.vdc.output_row_in_active_window(y);
             active_window_line[y] = in_active_window;
             if !in_active_window {
                 continue;
             }
-            let line_idx = self.vdc.line_state_index_for_frame_row(y);
             let ctrl = self.vdc.control_values_for_line(line_idx);
             let force_display_on = Self::env_force_display_on();
             let mut sprites_enabled =
@@ -43,6 +68,18 @@ impl Bus {
             background_line_enabled[y] = background_enabled;
             sprite_line_enabled[y] = sprites_enabled;
         }
+        if frame_x_offset >= FRAME_WIDTH || frame_x_end <= frame_x_offset {
+            frame_x_offset = 0;
+            frame_x_end = line_display_widths
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(256)
+                .min(FRAME_WIDTH);
+        }
+        let display_width = frame_x_end.saturating_sub(frame_x_offset).max(1);
+        self.current_display_x_offset = frame_x_offset;
+        self.current_display_width = display_width;
         let any_bg = background_line_enabled.iter().any(|&e| e);
         let any_spr = sprite_line_enabled.iter().any(|&e| e);
 
@@ -65,8 +102,10 @@ impl Bus {
             // The VDC does not drive pixel data — the screen is black.
             for y in 0..FRAME_HEIGHT {
                 let row_start = y * FRAME_WIDTH;
-                self.framebuffer[row_start..row_start + display_width].fill(0xFF000000);
+                self.framebuffer[row_start + frame_x_offset..row_start + frame_x_end]
+                    .fill(0xFF000000);
             }
+            self.apply_vce_palette_flicker(&line_display_starts, &line_display_widths);
             self.frame_ready = true;
             return;
         }
@@ -76,14 +115,15 @@ impl Bus {
             let overscan_colour = self.vce.palette_rgb(0x100);
             for y in 0..FRAME_HEIGHT {
                 let row_start = y * FRAME_WIDTH;
-                let row_end = row_start + display_width;
-                let colour = if active_window_line[y] {
-                    background_colour
-                } else {
-                    overscan_colour
-                };
-                self.framebuffer[row_start..row_end].fill(colour);
+                let row_end = row_start + frame_x_end;
+                self.framebuffer[row_start + frame_x_offset..row_end].fill(overscan_colour);
+                if active_window_line[y] {
+                    let line_start = row_start + line_display_starts[y];
+                    self.framebuffer[line_start..line_start + line_display_widths[y]]
+                        .fill(background_colour);
+                }
             }
+            self.apply_vce_palette_flicker(&line_display_starts, &line_display_widths);
             self.frame_ready = true;
             return;
         }
@@ -112,6 +152,12 @@ impl Bus {
         } else {
             self.vce.palette_rgb(0)
         };
+        let overscan_colour = self.vce.palette_rgb(0x100);
+        for y in 0..FRAME_HEIGHT {
+            let row_start = y * FRAME_WIDTH;
+            self.framebuffer[row_start + frame_x_offset..row_start + frame_x_end]
+                .fill(overscan_colour);
+        }
         if Self::env_force_test_palette() {
             // デバッグ: パレットを簡易グラデーションに初期化
             for i in 0..self.vce.palette.len() {
@@ -148,6 +194,8 @@ impl Bus {
             let plane_major = Self::env_bg_plane_major();
 
             for y in 0..FRAME_HEIGHT {
+                let line_display_start = line_display_starts[y];
+                let line_display_width = line_display_widths[y];
                 let line_state_index = self.vdc.line_state_index_for_frame_row(y);
                 if !background_line_enabled[y] {
                     // BG disabled on this line: VCE palette[0] backdrop.
@@ -155,8 +203,9 @@ impl Bus {
                     // the VCE fills with palette[0] (per MAME huc6260).
                     // Sprites may overlay on top if SPR is enabled.
                     let row_start = y * FRAME_WIDTH;
-                    let row_end = row_start + display_width;
-                    self.framebuffer[row_start..row_end].fill(background_colour);
+                    let row_end = row_start + line_display_start + line_display_width;
+                    self.framebuffer[row_start + line_display_start..row_end]
+                        .fill(background_colour);
                     continue;
                 }
                 let _active_row = self.vdc.active_row_for_output_row(y).unwrap_or(0);
@@ -203,7 +252,7 @@ impl Bus {
                 let line_in_tile = (sample_y % TILE_HEIGHT) as usize;
                 let start_sample_x = start_x_fp >> 4;
                 let start_tile_int = start_sample_x / TILE_WIDTH;
-                let end_sample_x_fp = start_x_fp + step_x * (display_width - 1);
+                let end_sample_x_fp = start_x_fp + step_x * (line_display_width - 1);
                 let end_sample_x = (end_sample_x_fp >> 4) + 1;
                 let end_tile_int = (end_sample_x + TILE_WIDTH - 1) / TILE_WIDTH;
                 let mut tiles_needed = end_tile_int.saturating_sub(start_tile_int) + 2;
@@ -271,8 +320,8 @@ impl Bus {
 
                 let mut sample_x_fp = start_x_fp;
                 let start_tile_int = start_tile_int;
-                for x in 0..display_width {
-                    let screen_index = y * FRAME_WIDTH + x;
+                for x in 0..line_display_width {
+                    let screen_index = y * FRAME_WIDTH + line_display_start + x;
                     let sample_x = (sample_x_fp >> 4) as usize;
                     let tile_idx_int = sample_x / TILE_WIDTH;
                     let tile_offset = tile_idx_int.saturating_sub(start_tile_int);
@@ -350,17 +399,58 @@ impl Bus {
             // doesn't generate BG pixels; the VCE provides palette[0].
             for y in 0..FRAME_HEIGHT {
                 let row_start = y * FRAME_WIDTH;
-                self.framebuffer[row_start..row_start + display_width].fill(background_colour);
+                let line_start = line_display_starts[y];
+                self.framebuffer
+                    [row_start + line_start..row_start + line_start + line_display_widths[y]]
+                    .fill(background_colour);
             }
         }
         if any_spr && !*self.burst_transition {
-            self.render_sprites(&sprite_line_enabled);
+            self.render_sprites(
+                &sprite_line_enabled,
+                &line_display_starts,
+                &line_display_widths,
+            );
         }
+        self.apply_vce_palette_flicker(&line_display_starts, &line_display_widths);
 
         self.frame_ready = true;
     }
 
-    fn render_sprites(&mut self, line_enabled: &[bool; FRAME_HEIGHT]) {
+    fn apply_vce_palette_flicker(
+        &mut self,
+        line_display_starts: &[usize; FRAME_HEIGHT],
+        line_display_widths: &[usize; FRAME_HEIGHT],
+    ) {
+        for event in self.vce_palette_flicker.0.drain(..) {
+            if event.row >= FRAME_HEIGHT {
+                continue;
+            }
+            let row_start = line_display_starts[event.row];
+            let row_width = line_display_widths[event.row];
+            let row_end = row_start.saturating_add(row_width);
+            if event.x < row_start || event.x >= row_end {
+                continue;
+            }
+            let row_base = event.row * FRAME_WIDTH;
+            let smear_colour = if event.x <= row_start {
+                self.framebuffer[row_base + row_start]
+            } else {
+                self.framebuffer[row_base + event.x - 1]
+            };
+            let end = (event.x + event.len).min(row_end);
+            for x in event.x..end {
+                self.framebuffer[row_base + x] = smear_colour;
+            }
+        }
+    }
+
+    fn render_sprites(
+        &mut self,
+        line_enabled: &[bool; FRAME_HEIGHT],
+        line_display_starts: &[usize; FRAME_HEIGHT],
+        line_display_widths: &[usize; FRAME_HEIGHT],
+    ) {
         if self.vdc.vram.is_empty() {
             return;
         }
@@ -397,6 +487,7 @@ impl Bus {
             let Some(active_row) = self.vdc.active_row_for_output_row(dest_row) else {
                 continue;
             };
+            let line_display_start = line_display_starts[dest_row] as i32;
             let mut line_sprites = Vec::with_capacity(16);
             let mut slots_used = 0u8;
             let scanline_y = active_row as i32;
@@ -419,7 +510,7 @@ impl Bus {
                 // Screen Y = sat_y - 64 (no +1; the -1 in "raster_count - 1"
                 // is already factored into m_current_segment_start).
                 let y = (y_word & 0x03FF) as i32 - 64;
-                let x = (x_word & 0x03FF) as i32 - 32;
+                let x = (x_word & 0x03FF) as i32 - 32 + line_display_start;
                 let width_cells = if (attr_word & 0x0100) != 0 {
                     2usize
                 } else {
@@ -490,7 +581,10 @@ impl Bus {
 
             self.sprite_line_counts[dest_row] = slots_used;
 
-            for screen_x in 0..self.current_display_width {
+            let line_display_start = line_display_starts[dest_row];
+            let line_display_width = line_display_widths[dest_row];
+            let line_display_end = line_display_start + line_display_width;
+            for screen_x in line_display_start..line_display_end {
                 let offset = dest_row * FRAME_WIDTH + screen_x;
                 for sprite in line_sprites.iter() {
                     if (screen_x as i32) < sprite.x

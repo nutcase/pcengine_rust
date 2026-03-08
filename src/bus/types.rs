@@ -1,4 +1,4 @@
-use super::{BRAM_SIZE, TIMER_CONTROL_START};
+use super::{BRAM_FORMAT_HEADER, BRAM_SIZE, TIMER_CONTROL_START};
 
 /// A `bool` wrapper that is invisible to bincode serialization.
 /// Encodes as zero bytes; decodes as `false`.  Used for transient render
@@ -86,6 +86,54 @@ impl core::ops::DerefMut for TransientU64 {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub(super) struct PaletteFlickerEvent {
+    pub(super) row: usize,
+    pub(super) x: usize,
+    pub(super) len: usize,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct TransientPaletteFlicker(pub(super) Vec<PaletteFlickerEvent>);
+
+impl bincode::Encode for TransientPaletteFlicker {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        _encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        Ok(())
+    }
+}
+
+impl<Context> bincode::Decode<Context> for TransientPaletteFlicker {
+    fn decode<D: bincode::de::Decoder>(
+        _decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(Self::default())
+    }
+}
+
+impl<'de, Context> bincode::BorrowDecode<'de, Context> for TransientPaletteFlicker {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+        _decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(Self::default())
+    }
+}
+
+impl core::ops::Deref for TransientPaletteFlicker {
+    type Target = [PaletteFlickerEvent];
+    fn deref(&self) -> &[PaletteFlickerEvent] {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for TransientPaletteFlicker {
+    fn deref_mut(&mut self) -> &mut [PaletteFlickerEvent] {
+        &mut self.0
+    }
+}
+
 /// A BRAM wrapper that is intentionally excluded from save-state encoding.
 /// Old save states (before BRAM support) remain decodable because this field
 /// consumes zero bytes on decode.
@@ -94,7 +142,9 @@ pub(super) struct TransientBram(pub(super) Vec<u8>);
 
 impl Default for TransientBram {
     fn default() -> Self {
-        Self(vec![0; BRAM_SIZE])
+        let mut bram = vec![0; BRAM_SIZE];
+        bram[..BRAM_FORMAT_HEADER.len()].copy_from_slice(&BRAM_FORMAT_HEADER);
+        Self(bram)
     }
 }
 

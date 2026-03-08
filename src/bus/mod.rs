@@ -3,7 +3,7 @@ use crate::vce::Vce;
 use crate::vdc::{
     DMA_CTRL_DST_DEC, DMA_CTRL_SRC_DEC, FRAME_HEIGHT, FRAME_WIDTH, VDC_CTRL_ENABLE_BACKGROUND,
     VDC_CTRL_ENABLE_BACKGROUND_LEGACY, VDC_CTRL_ENABLE_SPRITES, VDC_CTRL_ENABLE_SPRITES_LEGACY,
-    VDC_DMA_WORD_CYCLES, Vdc,
+    VDC_DMA_WORD_CYCLES, VDC_VBLANK_INTERVAL, Vdc,
 };
 
 // Re-export VDC status constants for external consumers (examples, etc.)
@@ -30,6 +30,8 @@ const HW_IRQ_BASE: usize = 0x1400;
 const HW_CPU_CTRL_BASE: usize = 0x1C00;
 const BRAM_PAGE: u8 = 0xF7;
 const BRAM_SIZE: usize = 0x0800;
+const BRAM_PAGE_DUMP_SIZE: usize = PAGE_SIZE;
+pub(super) const BRAM_FORMAT_HEADER: [u8; 8] = [0x48, 0x55, 0x42, 0x4D, 0x00, 0x88, 0x10, 0x80];
 const BRAM_LOCK_PORT: usize = 0x1803;
 const BRAM_UNLOCK_PORT: usize = 0x1807;
 const MASTER_CLOCK_HZ: u32 = 7_159_090;
@@ -45,7 +47,8 @@ mod types;
 
 use self::types::TransientU64;
 use self::types::{
-    BankMapping, ControlRegister, IoPort, Timer, TransientBool, TransientBram, VdcPort,
+    BankMapping, ControlRegister, IoPort, PaletteFlickerEvent, Timer, TransientBool, TransientBram,
+    TransientPaletteFlicker, VdcPort,
 };
 use font::FONT;
 
@@ -86,6 +89,9 @@ pub struct Bus {
     audio_total_generated_samples: TransientU64,
     audio_total_drained_samples: TransientU64,
     audio_total_drain_calls: TransientU64,
+    cpu_vdc_vce_penalty_cycles: TransientU64,
+    cpu_high_speed_hint: TransientBool,
+    vce_palette_flicker: TransientPaletteFlicker,
     framebuffer: Vec<u32>,
     frame_ready: bool,
     cart_ram: Vec<u8>,
@@ -94,6 +100,7 @@ pub struct Bus {
     video_output_enabled: TransientBool,
     current_display_width: usize,
     current_display_height: usize,
+    current_display_x_offset: usize,
     current_display_y_offset: usize,
     bg_opaque: Vec<bool>,
     bg_priority: Vec<bool>,
@@ -137,6 +144,9 @@ impl Bus {
             audio_total_generated_samples: TransientU64(0),
             audio_total_drained_samples: TransientU64(0),
             audio_total_drain_calls: TransientU64(0),
+            cpu_vdc_vce_penalty_cycles: TransientU64(0),
+            cpu_high_speed_hint: TransientBool(false),
+            vce_palette_flicker: TransientPaletteFlicker::default(),
             framebuffer: vec![0; FRAME_WIDTH * FRAME_HEIGHT],
             frame_ready: false,
             cart_ram: Vec::new(),
@@ -145,6 +155,7 @@ impl Bus {
             video_output_enabled: TransientBool(true),
             current_display_width: 256,
             current_display_height: 224,
+            current_display_x_offset: 0,
             current_display_y_offset: 0,
             bg_opaque: vec![false; FRAME_WIDTH * FRAME_HEIGHT],
             bg_priority: vec![false; FRAME_WIDTH * FRAME_HEIGHT],
@@ -211,6 +222,9 @@ impl Bus {
             {
                 let offset = (addr - 0x2000) as usize;
                 let value = self.read_io_internal(offset);
+                if Self::io_offset_targets_vdc_or_vce(offset) {
+                    self.note_cpu_vdc_vce_penalty();
+                }
                 #[cfg(feature = "trace_hw_writes")]
                 {
                     Self::log_hw_access("R", addr, value);
@@ -264,6 +278,9 @@ impl Bus {
                     return 0xFF;
                 }
                 let value = self.read_io_internal(io_offset);
+                if Self::io_offset_targets_vdc_or_vce(io_offset) {
+                    self.note_cpu_vdc_vce_penalty();
+                }
                 self.refresh_vdc_irq();
                 #[cfg(feature = "trace_hw_writes")]
                 {
@@ -293,12 +310,14 @@ impl Bus {
             && (0x0400..=0x07FF).contains(&mirrored)
         {
             self.write_vce_port(mirrored as u16, value);
+            self.note_cpu_vdc_vce_penalty();
             self.refresh_vdc_irq();
             return;
         }
         // Catch-all debug: force any <0x4000 write to go to VCE ports (decode A2..A0).
         if Self::env_vce_catchall() && (addr as usize) < 0x4000 {
             self.write_vce_port(addr as u16, value);
+            self.note_cpu_vdc_vce_penalty();
             self.refresh_vdc_irq();
             return;
         }
@@ -319,6 +338,9 @@ impl Bus {
             {
                 let offset = (addr - 0x2000) as usize;
                 self.write_io_internal(offset, value);
+                if Self::io_offset_targets_vdc_or_vce(offset) {
+                    self.note_cpu_vdc_vce_penalty();
+                }
                 #[cfg(feature = "trace_hw_writes")]
                 {
                     // Reduce spam: only show IO writes when offset <= 0x0100 or value non-zero.
@@ -364,6 +386,9 @@ impl Bus {
             BankMapping::Hardware => {
                 let io_offset = (addr as usize) & (PAGE_SIZE - 1);
                 self.write_io_internal(io_offset, value);
+                if Self::io_offset_targets_vdc_or_vce(io_offset) {
+                    self.note_cpu_vdc_vce_penalty();
+                }
                 #[cfg(feature = "trace_hw_writes")]
                 {
                     Self::log_hw_access("W", addr, value);
@@ -414,11 +439,18 @@ impl Bus {
         self.audio_psg_accumulator = TransientU64(0);
         self.audio_buffer.clear();
         self.reset_audio_diagnostics();
+        self.cpu_vdc_vce_penalty_cycles = TransientU64(0);
+        self.cpu_high_speed_hint = TransientBool(false);
+        self.vce_palette_flicker.0.clear();
         self.framebuffer.fill(0);
         self.frame_ready = false;
         self.cart_ram.fill(0);
         self.bram_unlocked = TransientBool(false);
         self.video_output_enabled = TransientBool(true);
+        self.current_display_width = 256;
+        self.current_display_height = 224;
+        self.current_display_x_offset = 0;
+        self.current_display_y_offset = 0;
         self.bg_opaque.fill(false);
         self.bg_priority.fill(false);
         self.sprite_line_counts.fill(0);
@@ -500,6 +532,11 @@ impl Bus {
     }
 
     pub fn write_st_port(&mut self, port: usize, value: u8) {
+        self.note_cpu_vdc_vce_penalty();
+        self.write_st_port_internal(port, value);
+    }
+
+    fn write_st_port_internal(&mut self, port: usize, value: u8) {
         let slot_index = port.min(self.st_ports.len().saturating_sub(1));
         if let Some(slot) = self.st_ports.get_mut(slot_index) {
             *slot = value;
@@ -617,6 +654,11 @@ impl Bus {
     }
 
     pub fn read_st_port(&mut self, port: usize) -> u8 {
+        self.note_cpu_vdc_vce_penalty();
+        self.read_st_port_internal(port)
+    }
+
+    fn read_st_port_internal(&mut self, port: usize) -> u8 {
         let value = match port {
             0 => self.vdc.selected_register(),
             1 => self.vdc.read_port(1),
@@ -763,8 +805,8 @@ impl Bus {
     }
 
     pub fn psg_sample(&mut self) -> i16 {
-        self.advance_psg_for_host_sample();
-        self.psg.generate_sample()
+        let psg_cycles = self.psg_cycles_for_host_sample();
+        self.psg.render_host_sample(psg_cycles)
     }
 
     /// Returns per-channel PSG state: (frequency, control, balance, noise_control)
@@ -843,6 +885,45 @@ impl Bus {
         self.audio_total_drain_calls = TransientU64(0);
     }
 
+    #[inline]
+    fn note_cpu_vdc_vce_penalty(&mut self) {
+        self.cpu_vdc_vce_penalty_cycles.0 = self.cpu_vdc_vce_penalty_cycles.0.saturating_add(1);
+    }
+
+    pub(crate) fn take_cpu_vdc_vce_penalty(&mut self) -> u8 {
+        let penalty = self.cpu_vdc_vce_penalty_cycles.0.min(u8::MAX as u64) as u8;
+        self.cpu_vdc_vce_penalty_cycles = TransientU64(0);
+        penalty
+    }
+
+    pub(crate) fn set_cpu_high_speed_hint(&mut self, high_speed: bool) {
+        self.cpu_high_speed_hint = TransientBool(high_speed);
+    }
+
+    fn note_vce_palette_access_flicker(&mut self) {
+        let Some(row) = self.vdc.active_row_for_scanline(self.vdc.scanline as usize) else {
+            return;
+        };
+        let line_idx = self.vdc.scanline as usize;
+        let line_start = self.vdc.display_start_for_line(line_idx);
+        let display_width = self
+            .vdc
+            .display_width_for_line(line_idx)
+            .max(1)
+            .min(FRAME_WIDTH);
+        let x = line_start
+            + ((self.vdc.phi_scaled as usize).saturating_mul(display_width)
+                / (VDC_VBLANK_INTERVAL as usize))
+                .min(display_width.saturating_sub(1));
+        let len = self
+            .vce
+            .palette_access_stall_pixels(*self.cpu_high_speed_hint)
+            .max(1);
+        self.vce_palette_flicker
+            .0
+            .push(PaletteFlickerEvent { row, x, len });
+    }
+
     pub fn take_audio_samples(&mut self) -> Vec<i16> {
         let drained = self.audio_buffer.len() as u64;
         if drained != 0 {
@@ -870,6 +951,7 @@ impl Bus {
         }
         let w = self.current_display_width;
         let h = self.current_display_height;
+        let x_off = self.current_display_x_offset;
         let y_off = self.current_display_y_offset;
         let needed = w * h;
         buf.resize(needed, 0);
@@ -878,7 +960,7 @@ impl Bus {
             if src_y >= FRAME_HEIGHT {
                 break;
             }
-            let src = src_y * FRAME_WIDTH;
+            let src = src_y * FRAME_WIDTH + x_off;
             let dst = y * w;
             buf[dst..dst + w].copy_from_slice(&self.framebuffer[src..src + w]);
         }
@@ -900,6 +982,7 @@ impl Bus {
         }
         let w = self.current_display_width;
         let h = self.current_display_height;
+        let x_off = self.current_display_x_offset;
         let y_off = self.current_display_y_offset;
         let mut out = vec![0u32; w * h];
         for y in 0..h {
@@ -907,7 +990,7 @@ impl Bus {
             if src_y >= FRAME_HEIGHT {
                 break;
             }
-            let src = src_y * FRAME_WIDTH;
+            let src = src_y * FRAME_WIDTH + x_off;
             let dst = y * w;
             out[dst..dst + w].copy_from_slice(&self.framebuffer[src..src + w]);
         }
@@ -1000,15 +1083,6 @@ impl Bus {
 
     pub fn framebuffer(&self) -> &[u32] {
         &self.framebuffer
-    }
-
-    fn compute_display_width(&self) -> usize {
-        let hdr = self.vdc.registers[0x0B];
-        let hdw = (hdr & 0x7F) as usize;
-        if hdw == 0 {
-            return 256;
-        }
-        ((hdw + 1) * 8).min(FRAME_WIDTH)
     }
 
     pub fn display_width(&self) -> usize {
@@ -1205,11 +1279,31 @@ impl Bus {
     }
 
     pub fn load_bram(&mut self, data: &[u8]) -> Result<(), &'static str> {
-        if data.len() != self.bram.len() {
-            return Err("BRAM size mismatch");
-        }
-        self.bram.copy_from_slice(data);
+        let normalized = Self::normalize_bram_image(data)?;
+        self.bram.copy_from_slice(&normalized);
         Ok(())
+    }
+
+    fn normalize_bram_image(data: &[u8]) -> Result<Vec<u8>, &'static str> {
+        let mut bram = match data.len() {
+            BRAM_SIZE => data.to_vec(),
+            BRAM_PAGE_DUMP_SIZE => data[..BRAM_SIZE].to_vec(),
+            _ => return Err("BRAM size mismatch"),
+        };
+        Self::repair_bram_header_if_blank(&mut bram);
+        Ok(bram)
+    }
+
+    fn repair_bram_header_if_blank(bram: &mut [u8]) {
+        if bram.len() < BRAM_FORMAT_HEADER.len() {
+            return;
+        }
+        if bram[..BRAM_FORMAT_HEADER.len()]
+            .iter()
+            .all(|&byte| byte == 0)
+        {
+            bram[..BRAM_FORMAT_HEADER.len()].copy_from_slice(&BRAM_FORMAT_HEADER);
+        }
     }
 
     fn enqueue_audio_samples(&mut self, phi_cycles: u32) {
@@ -1222,22 +1316,22 @@ impl Bus {
             .saturating_add(phi_cycles as u64 * AUDIO_SAMPLE_RATE as u64);
         while self.audio_phi_accumulator >= MASTER_CLOCK_HZ as u64 {
             self.audio_phi_accumulator -= MASTER_CLOCK_HZ as u64;
-            self.advance_psg_for_host_sample();
-            let sample = self.psg.generate_sample();
+            let psg_cycles = self.psg_cycles_for_host_sample();
+            let sample = self.psg.render_host_sample(psg_cycles);
             self.audio_buffer.push(sample);
             self.audio_total_generated_samples.0 =
                 self.audio_total_generated_samples.0.saturating_add(1);
         }
     }
 
-    fn advance_psg_for_host_sample(&mut self) {
+    fn psg_cycles_for_host_sample(&mut self) -> u32 {
         self.audio_psg_accumulator.0 = self
             .audio_psg_accumulator
             .0
             .saturating_add(PSG_CLOCK_HZ as u64);
         let psg_cycles = (self.audio_psg_accumulator.0 / AUDIO_SAMPLE_RATE as u64) as u32;
         self.audio_psg_accumulator.0 %= AUDIO_SAMPLE_RATE as u64;
-        self.psg.clock(psg_cycles);
+        psg_cycles
     }
 
     pub fn irq_pending(&self) -> bool {

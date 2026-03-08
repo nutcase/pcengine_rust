@@ -177,6 +177,38 @@ fn cycle_timing_reference_subset() {
 }
 
 #[test]
+fn vdc_accesses_add_one_cpu_cycle() {
+    let program = [0xAD, 0x00, 0x00, 0x00]; // LDA $0000 (VDC status when MPR0=$FF)
+    let (mut cpu, mut bus) = setup_cpu_with_program(&program);
+    bus.set_mpr(0, 0xFF);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cycles, 6, "VDC access should add one extra cycle");
+}
+
+#[test]
+fn vce_accesses_add_one_cpu_cycle() {
+    let program = [0x8D, 0x04, 0x04, 0x00]; // STA $0404 (VCE data low when MPR0=$FF)
+    let (mut cpu, mut bus) = setup_cpu_with_program(&program);
+    bus.set_mpr(0, 0xFF);
+    cpu.a = 0x56;
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cycles, 6, "VCE access should add one extra cycle");
+    assert_eq!(bus.vce_palette_word(0), 0x0056);
+}
+
+#[test]
+fn timer_access_does_not_take_vdc_vce_extra_cycle() {
+    let program = [0xAD, 0x00, 0x0C, 0x00]; // LDA $0C00 (timer counter when MPR0=$FF)
+    let (mut cpu, mut bus) = setup_cpu_with_program(&program);
+    bus.set_mpr(0, 0xFF);
+
+    let cycles = cpu.step(&mut bus);
+    assert_eq!(cycles, 5, "timer access should keep base timing");
+}
+
+#[test]
 fn opcode_base_cycles_reference_groups() {
     // 2-cycle group
     assert_eq!(Cpu::opcode_base_cycles(0xEA), 2); // NOP
@@ -1262,13 +1294,16 @@ fn st_ports_write_immediate_values() {
     let program = [0x03, 0xAA, 0x13, 0xBB, 0x23, 0xCC, 0x00];
     let (mut cpu, mut bus) = setup_cpu_with_program(&program);
 
-    cpu.step(&mut bus);
-    cpu.step(&mut bus);
-    cpu.step(&mut bus);
+    let st0_cycles = cpu.step(&mut bus);
+    let st1_cycles = cpu.step(&mut bus);
+    let st2_cycles = cpu.step(&mut bus);
 
     assert_eq!(bus.st_port(0), 0xAA);
     assert_eq!(bus.st_port(1), 0xBB);
     assert_eq!(bus.st_port(2), 0xCC);
+    assert_eq!(st0_cycles, Cpu::opcode_base_cycles(0x03) as u32 + 1);
+    assert_eq!(st1_cycles, Cpu::opcode_base_cycles(0x13) as u32 + 1);
+    assert_eq!(st2_cycles, Cpu::opcode_base_cycles(0x23) as u32 + 1);
 }
 
 #[test]

@@ -111,6 +111,8 @@ pub(crate) struct Vdc {
     pub(crate) zoom_line_x: [u16; LINES_PER_FRAME as usize],
     pub(crate) zoom_line_y: [u16; LINES_PER_FRAME as usize],
     pub(crate) control_line: [u16; LINES_PER_FRAME as usize],
+    pub(crate) hsr_line: [u16; LINES_PER_FRAME as usize],
+    pub(crate) hdr_line: [u16; LINES_PER_FRAME as usize],
     pub(crate) scroll_line_valid: [bool; LINES_PER_FRAME as usize],
     pub(crate) vram_dma_request: bool,
     pub(crate) cram_pending: bool,
@@ -213,6 +215,8 @@ impl Vdc {
             zoom_line_x: [0; LINES_PER_FRAME as usize],
             zoom_line_y: [0; LINES_PER_FRAME as usize],
             control_line: [0; LINES_PER_FRAME as usize],
+            hsr_line: [0; LINES_PER_FRAME as usize],
+            hdr_line: [0; LINES_PER_FRAME as usize],
             scroll_line_valid: [false; LINES_PER_FRAME as usize],
             vram_dma_request: false,
             cram_pending: false,
@@ -295,6 +299,8 @@ impl Vdc {
         self.zoom_line_x = [0; LINES_PER_FRAME as usize];
         self.zoom_line_y = [0; LINES_PER_FRAME as usize];
         self.control_line = [0; LINES_PER_FRAME as usize];
+        self.hsr_line = [0; LINES_PER_FRAME as usize];
+        self.hdr_line = [0; LINES_PER_FRAME as usize];
         self.scroll_line_valid = [false; LINES_PER_FRAME as usize];
         self.vram_dma_request = false;
         self.cram_pending = false;
@@ -476,6 +482,25 @@ impl Vdc {
 
     pub(crate) fn output_row_in_active_window(&self, row: usize) -> bool {
         self.active_row_for_output_row(row).is_some()
+    }
+
+    pub(crate) fn active_row_for_scanline(&self, scanline: usize) -> Option<usize> {
+        let window = self.vertical_window();
+        if !window.timing_programmed {
+            return (scanline < FRAME_HEIGHT).then_some(scanline);
+        }
+        if scanline >= window.active_start_line && scanline < window.vblank_start_line {
+            Some(scanline - window.active_start_line)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn in_active_display_period(&self) -> bool {
+        let window = self.vertical_window();
+        !self.in_vblank
+            && (self.scanline as usize) >= window.active_start_line
+            && (self.scanline as usize) < window.vblank_start_line
     }
 
     pub(crate) fn vblank_start_scanline(&self) -> u16 {
@@ -878,7 +903,10 @@ impl Vdc {
                 eprintln!("  TRACE R05 commit {:04X}", combined);
             }
         }
-        if index < self.registers.len() {
+        let block_vertical_timing_write =
+            matches!(index, 0x0C | 0x0D | 0x0E) && self.in_active_display_period();
+
+        if index < self.registers.len() && !block_vertical_timing_write {
             let stored = if matches!(index, 0x00 | 0x01) {
                 combined & 0x7FFF
             } else {
@@ -936,7 +964,19 @@ impl Vdc {
             0x0C => {
                 // VPR (Vertical Position Register): VSW (low) + VDS (high).
                 // Timing-only; stored for vertical window calculation.
-                self.registers[0x0C] = combined;
+                if !block_vertical_timing_write {
+                    self.registers[0x0C] = combined;
+                }
+            }
+            0x0D => {
+                if !block_vertical_timing_write {
+                    self.registers[0x0D] = combined;
+                }
+            }
+            0x0E => {
+                if !block_vertical_timing_write {
+                    self.registers[0x0E] = combined;
+                }
             }
             0x0F => self.write_dma_control(combined),
             0x10 => self.write_dma_source(combined),
@@ -1210,6 +1250,8 @@ impl Vdc {
         self.zoom_line_x[idx] = self.zoom_x;
         self.zoom_line_y[idx] = self.zoom_y;
         self.control_line[idx] = self.control_for_render();
+        self.hsr_line[idx] = self.registers[0x0A];
+        self.hdr_line[idx] = self.registers[0x0B];
         self.scroll_line_valid[idx] = true;
 
         // After latching, increment the offset for the next active scanline.
@@ -1241,6 +1283,8 @@ impl Vdc {
             self.zoom_line_x[line] = self.zoom_x;
             self.zoom_line_y[line] = self.zoom_y;
             self.control_line[line] = self.control_for_render();
+            self.hsr_line[line] = self.registers[0x0A];
+            self.hdr_line[line] = self.registers[0x0B];
             self.scroll_line_valid[line] = true;
         }
     }
@@ -1276,6 +1320,48 @@ impl Vdc {
         } else {
             self.control_for_render()
         }
+    }
+
+    pub(crate) fn horizontal_values_for_line(&mut self, line: usize) -> (u16, u16) {
+        self.ensure_line_state(line);
+        if line < self.hsr_line.len() {
+            (self.hsr_line[line], self.hdr_line[line])
+        } else {
+            (self.registers[0x0A], self.registers[0x0B])
+        }
+    }
+
+    pub(crate) fn display_width_from_hdr(hdr: u16) -> usize {
+        let hdw = (hdr & 0x007F) as usize;
+        if hdw == 0 {
+            return 256;
+        }
+        ((hdw + 1) * TILE_WIDTH).min(FRAME_WIDTH)
+    }
+
+    pub(crate) fn display_start_from_hsr(hsr: u16) -> usize {
+        let hds = ((hsr >> 8) & 0x007F) as usize;
+        (hds * TILE_WIDTH).min(FRAME_WIDTH.saturating_sub(1))
+    }
+
+    pub(crate) fn display_end_margin_from_hdr(hdr: u16) -> usize {
+        let hde = ((hdr >> 8) & 0x007F) as usize;
+        (hde * TILE_WIDTH).min(FRAME_WIDTH)
+    }
+
+    pub(crate) fn display_width_for_line(&mut self, line: usize) -> usize {
+        let (_, hdr) = self.horizontal_values_for_line(line);
+        Self::display_width_from_hdr(hdr)
+    }
+
+    pub(crate) fn display_start_for_line(&mut self, line: usize) -> usize {
+        let (hsr, _) = self.horizontal_values_for_line(line);
+        Self::display_start_from_hsr(hsr)
+    }
+
+    pub(crate) fn display_end_margin_for_line(&mut self, line: usize) -> usize {
+        let (_, hdr) = self.horizontal_values_for_line(line);
+        Self::display_end_margin_from_hdr(hdr)
     }
 
     pub(crate) fn line_state_index_for_frame_row(&self, row: usize) -> usize {

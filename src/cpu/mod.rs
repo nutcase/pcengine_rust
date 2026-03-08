@@ -154,6 +154,8 @@ impl Cpu {
 
     #[allow(unreachable_patterns)]
     pub fn step(&mut self, bus: &mut Bus) -> u32 {
+        let _ = bus.take_cpu_vdc_vce_penalty();
+        bus.set_cpu_high_speed_hint(self.clock_high_speed);
         if self.halted {
             return 0;
         }
@@ -165,7 +167,8 @@ impl Cpu {
         if self.nmi_pending {
             self.nmi_pending = false;
             let vector_slot = Self::vector_slot_with_fallback(bus, VECTOR_NMI, VECTOR_LEGACY_NMI);
-            return self.handle_interrupt(bus, vector_slot, false) as u32;
+            let cycles = self.handle_interrupt(bus, vector_slot, false) as u32;
+            return Self::finish_step(bus, cycles);
         }
 
         if (self.irq_pending || bus.irq_pending())
@@ -175,7 +178,8 @@ impl Cpu {
             if let Some(mask) = bus.next_irq() {
                 bus.acknowledge_irq(mask);
                 let vector_slot = Self::vector_slot_for_irq_source(bus, mask);
-                return self.handle_interrupt(bus, vector_slot, false) as u32;
+                let cycles = self.handle_interrupt(bus, vector_slot, false) as u32;
+                return Self::finish_step(bus, cycles);
             }
             // No actual IRQ source on the bus — the latched irq_pending was
             // stale (already serviced).  Fall through to normal execution.
@@ -978,7 +982,13 @@ impl Cpu {
 
             _ => unreachable!("opcode dispatch table out of sync: {opcode:#04X}"),
         };
-        self.block_transfer_cycles.take().unwrap_or(cycles as u32)
+        let cycles = self.block_transfer_cycles.take().unwrap_or(cycles as u32);
+        Self::finish_step(bus, cycles)
+    }
+
+    #[inline]
+    fn finish_step(bus: &mut Bus, cycles: u32) -> u32 {
+        cycles.saturating_add(bus.take_cpu_vdc_vce_penalty() as u32)
     }
 
     fn lda(&mut self, value: u8, cycles: u8) -> u8 {

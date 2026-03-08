@@ -149,6 +149,15 @@ impl Bus {
         }
     }
 
+    pub(super) fn io_offset_targets_vdc_or_vce(raw_offset: usize) -> bool {
+        let mut offset = raw_offset & 0x1FFF;
+        offset = Self::normalized_io_offset(offset);
+        if Self::env_route_02xx_hw() && offset >= 0x0200 && offset < 0x0220 {
+            offset &= 0x01FF;
+        }
+        Self::vdc_port_kind(offset).is_some() || matches!(offset, 0x0400..=0x07FF | 0x1C40..=0x1C47)
+    }
+
     pub(super) fn read_io_internal(&mut self, raw_offset: usize) -> u8 {
         // The HuC6280 only decodes A0–A10 for the hardware page; fold everything
         // into 0x0000–0x1FFF first, then optional 0x0200 folding for debug.
@@ -208,9 +217,9 @@ impl Bus {
             0x1800..=0x1BFF => match offset {
                 BRAM_LOCK_PORT => {
                     *self.bram_unlocked = false;
-                    self.io[offset]
+                    0xFF
                 }
-                _ => self.io[offset],
+                _ => 0xFF,
             },
             0x1C00..=0x1FFF => {
                 if let Some(value) = self.read_control_register(offset) {
@@ -236,10 +245,10 @@ impl Bus {
                 self.vdc.last_io_addr = offset as u16;
             }
             match port {
-                VdcPort::Control => self.write_st_port(0, value),
+                VdcPort::Control => self.write_st_port_internal(0, value),
                 VdcPort::Data => {
                     let port_index = if offset & 0x01 != 0 { 2 } else { 1 };
-                    self.write_st_port(port_index, value)
+                    self.write_st_port_internal(port_index, value)
                 }
             }
             return;
@@ -303,6 +312,9 @@ impl Bus {
 
     #[inline]
     pub(super) fn read_vce_port(&mut self, addr: u16) -> u8 {
+        if matches!(addr & 0x0007, 0x04 | 0x05) && self.vdc.in_active_display_period() {
+            self.note_vce_palette_access_flicker();
+        }
         match addr & 0x0007 {
             0x00 => self.vce.read_control_low(),
             0x01 => self.vce.read_control_high(),
@@ -316,6 +328,9 @@ impl Bus {
 
     #[inline]
     pub(super) fn write_vce_port(&mut self, addr: u16, value: u8) {
+        if matches!(addr & 0x0007, 0x04 | 0x05) && self.vdc.in_active_display_period() {
+            self.note_vce_palette_access_flicker();
+        }
         match addr & 0x0007 {
             0x00 => self.vce.write_control_low(value),
             0x01 => self.vce.write_control_high(value),

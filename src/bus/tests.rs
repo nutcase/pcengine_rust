@@ -2,9 +2,9 @@ use super::*;
 use crate::psg::PSG_WAVE_SIZE;
 use crate::psg::*;
 use crate::vdc::{
-    DMA_CTRL_IRQ_SATB, DMA_CTRL_IRQ_VRAM, DMA_CTRL_SATB_AUTO, LINES_PER_FRAME,
+    DMA_CTRL_IRQ_SATB, DMA_CTRL_IRQ_VRAM, DMA_CTRL_SATB_AUTO, FRAME_WIDTH, LINES_PER_FRAME,
     SPRITE_PATTERN_HEIGHT, SPRITE_PATTERN_WORDS, TILE_HEIGHT, TILE_WIDTH, VDC_BUSY_ACCESS_CYCLES,
-    VDC_VBLANK_INTERVAL, VDC_VISIBLE_LINES,
+    VDC_VBLANK_INTERVAL, VDC_VISIBLE_LINES, Vdc,
 };
 
 const PHI_CYCLES_PER_SAMPLE: u32 = MASTER_CLOCK_HZ / AUDIO_SAMPLE_RATE;
@@ -322,12 +322,53 @@ fn bram_is_locked_until_unlocked_via_1807_and_relocked_by_1803_read() {
     bus.write(bram_addr, 0x34);
     assert_eq!(bus.read(bram_addr), 0x34);
 
-    let _ = bus.read(0x1803);
+    assert_eq!(bus.read(0x1803), 0xFF);
     assert!(!bus.bram_unlocked());
     assert_eq!(bus.read(bram_addr), 0xFF);
 
     bus.write(0x1807, 0x80);
     assert_eq!(bus.read(bram_addr), 0x34);
+}
+
+#[test]
+fn bram_default_image_starts_with_formatted_header() {
+    let bus = Bus::new();
+    assert_eq!(&bus.bram()[..BRAM_FORMAT_HEADER.len()], &BRAM_FORMAT_HEADER);
+}
+
+#[test]
+fn bram_load_accepts_blank_legacy_2k_image_and_repairs_header() {
+    let mut bus = Bus::new();
+    let mut legacy = vec![0; 0x0800];
+    legacy[0x20] = 0x5A;
+
+    bus.load_bram(&legacy).unwrap();
+
+    assert_eq!(&bus.bram()[..BRAM_FORMAT_HEADER.len()], &BRAM_FORMAT_HEADER);
+    assert_eq!(bus.bram()[0x20], 0x5A);
+}
+
+#[test]
+fn bram_load_accepts_full_f7_page_dump() {
+    let mut bus = Bus::new();
+    let mut dump = vec![0xCC; PAGE_SIZE];
+    dump[..BRAM_FORMAT_HEADER.len()].copy_from_slice(&BRAM_FORMAT_HEADER);
+    dump[0x07FF] = 0xA5;
+
+    bus.load_bram(&dump).unwrap();
+
+    assert_eq!(&bus.bram()[..BRAM_FORMAT_HEADER.len()], &BRAM_FORMAT_HEADER);
+    assert_eq!(bus.bram()[0x07FF], 0xA5);
+}
+
+#[test]
+fn bram_cd_status_space_reads_as_ff_without_cd_hardware() {
+    let mut bus = Bus::new();
+    bus.set_mpr(0, 0xFF);
+
+    assert_eq!(bus.read(0x1800), 0xFF);
+    assert_eq!(bus.read(0x1807), 0xFF);
+    assert_eq!(bus.read(0x1BFF), 0xFF);
 }
 
 #[test]
@@ -711,6 +752,50 @@ fn vdc_output_row_active_window_honours_vdw_vcr_gap() {
 }
 
 #[test]
+fn vdc_vertical_timing_registers_ignore_writes_during_active_display() {
+    let mut vdc = Vdc::new();
+    vdc.registers[0x0C] = 0x0100;
+    vdc.registers[0x0D] = 0x0003;
+    vdc.registers[0x0E] = 0x0002;
+    vdc.in_vblank = false;
+    vdc.scanline = vdc.vertical_window().active_start_line as u16;
+
+    vdc.write_select(0x0C);
+    vdc.write_data_low(0x34);
+    vdc.write_data_high_direct(0x12);
+    vdc.write_select(0x0D);
+    vdc.write_data_low(0x78);
+    vdc.write_data_high_direct(0x56);
+    vdc.write_select(0x0E);
+    vdc.write_data_low(0xBC);
+    vdc.write_data_high_direct(0x9A);
+
+    assert_eq!(vdc.registers[0x0C], 0x0100);
+    assert_eq!(vdc.registers[0x0D], 0x0003);
+    assert_eq!(vdc.registers[0x0E], 0x0002);
+}
+
+#[test]
+fn vdc_vertical_timing_registers_update_outside_active_display() {
+    let mut vdc = Vdc::new();
+    vdc.in_vblank = true;
+
+    vdc.write_select(0x0C);
+    vdc.write_data_low(0x34);
+    vdc.write_data_high_direct(0x12);
+    vdc.write_select(0x0D);
+    vdc.write_data_low(0x78);
+    vdc.write_data_high_direct(0x56);
+    vdc.write_select(0x0E);
+    vdc.write_data_low(0xBC);
+    vdc.write_data_high_direct(0x9A);
+
+    assert_eq!(vdc.registers[0x0C], 0x1234);
+    assert_eq!(vdc.registers[0x0D], 0x5678);
+    assert_eq!(vdc.registers[0x0E], 0x9ABC);
+}
+
+#[test]
 fn line_state_index_tracks_vpr_active_start() {
     let mut vdc = Vdc::new();
     vdc.registers[0x0C] = 0x0302; // VSW=2, VDS=3 => start line (2+1)+(3+2)=8
@@ -879,6 +964,211 @@ fn renderer_honours_vertical_window_overscan_rows() {
         "active line should render tile data"
     );
     assert_eq!(overscan_pixel, 0x000000, "overscan lines should be black");
+}
+
+#[test]
+fn vce_palette_access_during_active_display_smears_previous_pixel_colour() {
+    let mut bus = Bus::new();
+    bus.set_mpr(0, 0xFF);
+    set_vdc_control(
+        &mut bus,
+        VDC_CTRL_ENABLE_BACKGROUND | VDC_CTRL_ENABLE_BACKGROUND_LEGACY,
+    );
+
+    // 7 MHz dot clock => one low-speed CPU palette access smears two pixels.
+    bus.vce.write_control_low(0x01);
+
+    const TILE_ID: usize = 0x40;
+    for col in 0..32usize {
+        let palette_bank = if col < 8 { 0 } else { 1 };
+        bus.vdc.vram[col] = (TILE_ID as u16) | ((palette_bank as u16) << 12);
+    }
+    for row in 0..8usize {
+        bus.vdc.vram[TILE_ID * 16 + row] = 0x00FF;
+        bus.vdc.vram[TILE_ID * 16 + row + 8] = 0x0000;
+    }
+    bus.vce.palette[0x001] = 0x0007;
+    bus.vce.palette[0x011] = 0x01C0;
+
+    bus.vdc.in_vblank = false;
+    bus.vdc.scanline = 0;
+    bus.vdc.phi_scaled =
+        (VDC_VBLANK_INTERVAL as u64 * 64) / (bus.vdc.display_width_for_line(0) as u64);
+    bus.set_cpu_high_speed_hint(false);
+    bus.vce.set_address(0x20);
+
+    let mut baseline = bus.clone();
+    baseline.render_frame_from_vram();
+
+    bus.write_io(VCE_DATA_ADDR as usize, 0x00);
+    bus.render_frame_from_vram();
+
+    let left = bus.vce_palette_rgb(0x001);
+    let right = bus.vce_palette_rgb(0x011);
+    let smear_x = bus.vdc.display_start_for_line(0) + 64;
+    assert_eq!(baseline.framebuffer[smear_x], right);
+    assert_eq!(bus.framebuffer[smear_x], left);
+    assert_eq!(bus.framebuffer[smear_x + 1], right);
+}
+
+#[test]
+fn vdc_horizontal_display_width_is_latched_per_line() {
+    let mut vdc = Vdc::new();
+    vdc.registers[0x0B] = 0x001F;
+    vdc.latch_line_state(0);
+    vdc.registers[0x0B] = 0x0027;
+    vdc.latch_line_state(1);
+
+    assert_eq!(vdc.display_width_for_line(0), 256);
+    assert_eq!(vdc.display_width_for_line(1), 320);
+}
+
+#[test]
+fn vdc_horizontal_display_start_is_latched_per_line() {
+    let mut vdc = Vdc::new();
+    vdc.registers[0x0A] = 0x0002;
+    vdc.latch_line_state(0);
+    vdc.registers[0x0A] = 0x0202;
+    vdc.latch_line_state(1);
+
+    assert_eq!(vdc.display_start_for_line(0), 0);
+    assert_eq!(vdc.display_start_for_line(1), 16);
+}
+
+#[test]
+fn vdc_horizontal_display_end_margin_is_latched_per_line() {
+    let mut vdc = Vdc::new();
+    vdc.registers[0x0B] = 0x001F;
+    vdc.latch_line_state(0);
+    vdc.registers[0x0B] = 0x021F;
+    vdc.latch_line_state(1);
+
+    assert_eq!(vdc.display_end_margin_for_line(0), 0);
+    assert_eq!(vdc.display_end_margin_for_line(1), 16);
+}
+
+#[test]
+fn render_frame_uses_maximum_latched_horizontal_width_and_preserves_overscan() {
+    let mut bus = Bus::new();
+    bus.vce.palette[0x000] = 0x0000;
+    bus.vce.palette[0x100] = 0x01C0;
+
+    bus.vdc.registers[0x0B] = 0x001F;
+    bus.vdc.latch_line_state(0);
+    bus.vdc.registers[0x0B] = 0x0027;
+    bus.vdc.latch_line_state(1);
+
+    bus.render_frame_from_vram();
+
+    let background = bus.vce_palette_rgb(0x000);
+    let overscan = bus.vce_palette_rgb(0x100);
+    assert_eq!(bus.display_width(), 320);
+    assert_eq!(bus.framebuffer[300], overscan);
+    assert_eq!(bus.framebuffer[FRAME_WIDTH + 300], background);
+}
+
+#[test]
+fn take_frame_includes_left_border_when_latched_horizontal_start_increases() {
+    let mut bus = Bus::new();
+    bus.set_mpr(0, 0xFF);
+
+    set_vdc_control(
+        &mut bus,
+        VDC_CTRL_ENABLE_BACKGROUND | VDC_CTRL_ENABLE_BACKGROUND_LEGACY,
+    );
+    bus.vce.palette[0x000] = 0x0000;
+    bus.vce.palette[0x100] = 0x01C0;
+    bus.vce.palette[0x001] = 0x0007;
+
+    const TILE_ID: usize = 0x40;
+    bus.vdc.vram[0] = TILE_ID as u16;
+    for row in 0..8usize {
+        bus.vdc.vram[TILE_ID * 16 + row] = 0x00FF;
+        bus.vdc.vram[TILE_ID * 16 + row + 8] = 0x0000;
+    }
+
+    bus.vdc.registers[0x0A] = 0x0002;
+    bus.vdc.registers[0x0B] = 0x001F;
+    bus.vdc.latch_line_state(0);
+    bus.vdc.registers[0x0A] = 0x0202;
+    bus.vdc.latch_line_state(1);
+
+    bus.render_frame_from_vram();
+    let frame = bus.take_frame().expect("expected frame");
+
+    let overscan = bus.vce_palette_rgb(0x100);
+    let tile_colour = bus.vce_palette_rgb(0x001);
+    assert_eq!(bus.display_width(), 272);
+    assert_eq!(frame[0], tile_colour);
+    assert_eq!(frame[bus.display_width()], overscan);
+    assert_eq!(frame[bus.display_width() + 16], tile_colour);
+}
+
+#[test]
+fn sprites_follow_horizontal_display_start_offset() {
+    let mut bus = Bus::new();
+    bus.set_mpr(0, 0xFF);
+
+    bus.vce.palette[0x00] = 0x0000;
+    bus.vce.palette[0x100] = 0x0000;
+    bus.vce.palette[0x101] = 0x7C00;
+    write_constant_sprite_tile(&mut bus, 0, 0x01);
+
+    set_vdc_control(
+        &mut bus,
+        VDC_CTRL_ENABLE_SPRITES | VDC_CTRL_ENABLE_SPRITES_LEGACY,
+    );
+
+    bus.vdc.registers[0x0A] = 0x0202;
+    bus.vdc.registers[0x0B] = 0x001F;
+    bus.vdc.latch_line_state(0);
+
+    bus.vdc.satb[0] = ((0 + 64) & 0x03FF) as u16;
+    bus.vdc.satb[1] = ((0 + 32) & 0x03FF) as u16;
+    bus.vdc.satb[2] = 0x0000;
+    bus.vdc.satb[3] = 0x0000;
+
+    bus.render_frame_from_vram();
+
+    let sprite_colour = bus.vce.palette_rgb(0x101);
+    assert_eq!(bus.framebuffer[16], sprite_colour);
+    let frame = bus.take_frame().expect("expected frame");
+    assert_eq!(frame[0], sprite_colour);
+}
+
+#[test]
+fn take_frame_includes_right_border_when_latched_horizontal_end_increases() {
+    let mut bus = Bus::new();
+    bus.set_mpr(0, 0xFF);
+
+    set_vdc_control(
+        &mut bus,
+        VDC_CTRL_ENABLE_BACKGROUND | VDC_CTRL_ENABLE_BACKGROUND_LEGACY,
+    );
+    bus.vce.palette[0x000] = 0x0000;
+    bus.vce.palette[0x100] = 0x01C0;
+    bus.vce.palette[0x001] = 0x0007;
+
+    const TILE_ID: usize = 0x40;
+    bus.vdc.vram[0] = TILE_ID as u16;
+    for row in 0..8usize {
+        bus.vdc.vram[TILE_ID * 16 + row] = 0x00FF;
+        bus.vdc.vram[TILE_ID * 16 + row + 8] = 0x0000;
+    }
+
+    bus.vdc.registers[0x0A] = 0x0002;
+    bus.vdc.registers[0x0B] = 0x001F;
+    bus.vdc.latch_line_state(0);
+    bus.vdc.registers[0x0B] = 0x021F;
+    bus.vdc.latch_line_state(1);
+
+    bus.render_frame_from_vram();
+    let frame = bus.take_frame().expect("expected frame");
+
+    let overscan = bus.vce_palette_rgb(0x100);
+    assert_eq!(bus.display_width(), 272);
+    assert_eq!(frame[256], overscan);
+    assert_eq!(frame[bus.display_width() + 256], overscan);
 }
 
 #[test]
@@ -1090,8 +1380,8 @@ fn io_space_mirror_routes_vdc_and_vce() {
     bus.write(0x2402, 0x00); // address low
     bus.write(0x2403, 0x00); // address high
     bus.write(0x2404, 0x56); // data low
-    bus.write(0x2405, 0x34); // data high
-    assert_eq!(bus.vce_palette_word(0x0000), 0x3456);
+    bus.write(0x2405, 0x01); // data high (only bit 0 is meaningful)
+    assert_eq!(bus.vce_palette_word(0x0000), 0x0156);
 
     // VDC register select/data via mirrored offsets inside 0x0000-0x03FF.
     bus.write(0x2201, 0x05); // select control register (odd address mirror)
@@ -1131,9 +1421,9 @@ fn vce_palette_write_and_read_round_trip() {
     bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
 
     bus.write(VCE_DATA_ADDR, 0x34);
-    bus.write(VCE_DATA_HIGH_ADDR, 0x12);
+    bus.write(VCE_DATA_HIGH_ADDR, 0x01);
 
-    assert_eq!(bus.vce_palette_word(0x0010), 0x1234);
+    assert_eq!(bus.vce_palette_word(0x0010), 0x0134);
 
     // Reading back should return the stored value and advance the index.
     bus.write(VCE_ADDRESS_ADDR, 0x10);
@@ -1141,7 +1431,7 @@ fn vce_palette_write_and_read_round_trip() {
     let lo = bus.read(VCE_DATA_ADDR);
     let hi = bus.read(VCE_DATA_HIGH_ADDR);
     assert_eq!(lo, 0x34);
-    assert_eq!(hi, 0x12);
+    assert_eq!(hi, 0xFF);
     assert_eq!(bus.vce_palette_word(0x0011), 0);
 }
 
@@ -1154,15 +1444,53 @@ fn vce_sequential_writes_auto_increment_index() {
     bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
 
     for i in 0..4u16 {
-        let value = 0x1000 | i;
+        let value = 0x0100 | i;
         bus.write(VCE_DATA_ADDR, (value & 0x00FF) as u8);
         bus.write(VCE_DATA_HIGH_ADDR, (value >> 8) as u8);
     }
 
-    assert_eq!(bus.vce_palette_word(0), 0x1000);
-    assert_eq!(bus.vce_palette_word(1), 0x1001);
-    assert_eq!(bus.vce_palette_word(2), 0x1002);
-    assert_eq!(bus.vce_palette_word(3), 0x1003);
+    assert_eq!(bus.vce_palette_word(0), 0x0100);
+    assert_eq!(bus.vce_palette_word(1), 0x0101);
+    assert_eq!(bus.vce_palette_word(2), 0x0102);
+    assert_eq!(bus.vce_palette_word(3), 0x0103);
+}
+
+#[test]
+fn vce_write_only_and_unused_ports_read_back_as_ff() {
+    let mut bus = Bus::new();
+    bus.set_mpr(0, 0xFF);
+
+    bus.write(0x0400, 0x07);
+    bus.write(0x0401, 0xAA);
+    bus.write(VCE_ADDRESS_ADDR, 0x34);
+    bus.write(VCE_ADDRESS_HIGH_ADDR, 0x01);
+
+    assert_eq!(bus.read(0x0400), 0xFF);
+    assert_eq!(bus.read(0x0401), 0xFF);
+    assert_eq!(bus.read(VCE_ADDRESS_ADDR), 0xFF);
+    assert_eq!(bus.read(VCE_ADDRESS_HIGH_ADDR), 0xFF);
+    assert_eq!(bus.read(0x0406), 0xFF);
+    assert_eq!(bus.read(0x0407), 0xFF);
+}
+
+#[test]
+fn vce_high_data_read_sets_unused_bits_high() {
+    let mut bus = Bus::new();
+    bus.set_mpr(0, 0xFF);
+
+    bus.write(VCE_ADDRESS_ADDR, 0x22);
+    bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
+    bus.write(VCE_DATA_ADDR, 0x55);
+    bus.write(VCE_DATA_HIGH_ADDR, 0x00);
+    bus.write(VCE_DATA_ADDR, 0x66);
+    bus.write(VCE_DATA_HIGH_ADDR, 0x01);
+
+    bus.write(VCE_ADDRESS_ADDR, 0x22);
+    bus.write(VCE_ADDRESS_HIGH_ADDR, 0x00);
+    assert_eq!(bus.read(VCE_DATA_ADDR), 0x55);
+    assert_eq!(bus.read(VCE_DATA_HIGH_ADDR), 0xFE);
+    assert_eq!(bus.read(VCE_DATA_ADDR), 0x66);
+    assert_eq!(bus.read(VCE_DATA_HIGH_ADDR), 0xFF);
 }
 
 #[test]
@@ -2040,10 +2368,7 @@ fn vdc_cram_dma_transfers_palette_from_vram() {
         );
     }
     assert_eq!(bus.vdc_register(0x00), Some(VRAM_BASE + words.len() as u16));
-    assert_eq!(
-        bus.read_io(VCE_ADDRESS_ADDR as usize) & 0xFF,
-        words.len() as u8
-    );
+    assert_eq!(bus.read_io(VCE_ADDRESS_ADDR as usize), 0xFF);
     assert_ne!(bus.vdc_status_bits() & VDC_STATUS_DV, 0);
 }
 
