@@ -86,6 +86,15 @@ impl Psg {
         *self = Self::new();
     }
 
+    pub(crate) fn post_load_fixup(&mut self) {
+        // Save states should preserve PSG register/channel state, but the
+        // host-side DC blocker history is output pipeline state. Restoring
+        // only part of that history causes audible garbage immediately after
+        // load, so restart the filter cleanly.
+        self.post_filter_state = 0.0;
+        self.dc_prev_input = TransientF64(0.0);
+    }
+
     pub(crate) fn write_address(&mut self, value: u8) {
         self.select = value;
     }
@@ -272,5 +281,22 @@ impl Psg {
     fn write_wave_ram(&mut self, addr: usize, value: u8) {
         let index = addr % self.waveform_ram.len();
         self.waveform_ram[index] = value & 0x1F;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn post_load_fixup_resets_output_filter_history() {
+        let mut psg = Psg::new();
+        psg.post_filter_state = 123.0;
+        psg.dc_prev_input = TransientF64(45.0);
+
+        psg.post_load_fixup();
+
+        assert_eq!(psg.post_filter_state, 0.0);
+        assert_eq!(*psg.dc_prev_input, 0.0);
     }
 }

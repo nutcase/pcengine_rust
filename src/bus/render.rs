@@ -78,7 +78,7 @@ impl Bus {
                 .min(FRAME_WIDTH);
         }
         let display_width = frame_x_end.saturating_sub(frame_x_offset).max(1);
-        self.current_display_x_offset = frame_x_offset;
+        self.current_display_x_offset = super::types::TransientUsize(frame_x_offset);
         self.current_display_width = display_width;
         let any_bg = background_line_enabled.iter().any(|&e| e);
         let any_spr = sprite_line_enabled.iter().any(|&e| e);

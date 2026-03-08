@@ -2869,6 +2869,30 @@ fn disabling_video_output_clears_pending_frame_trigger() {
 }
 
 #[test]
+fn post_load_fixup_invalidates_transient_render_caches() {
+    let mut bus = Bus::new();
+    bus.vdc.registers[0x0A] = 0x0202;
+    bus.vdc.registers[0x0B] = 0x021F;
+    bus.vdc.latch_line_state(0);
+    bus.frame_ready = true;
+    bus.audio_phi_accumulator = 1234;
+    bus.audio_buffer.extend_from_slice(&[1, 2, 3, 4]);
+    bus.video_output_enabled = super::types::TransientBool(false);
+
+    assert!(bus.vdc_scroll_line_valid(0));
+    assert_eq!(bus.vdc.horizontal_values_for_line(0), (0x0202, 0x021F));
+
+    bus.post_load_fixup();
+
+    assert!(!bus.vdc_scroll_line_valid(0));
+    assert!(!bus.frame_ready);
+    assert_eq!(bus.audio_phi_accumulator, 0);
+    assert!(bus.audio_buffer.is_empty());
+    assert!(*bus.video_output_enabled);
+    assert_eq!(bus.vdc.horizontal_values_for_line(0), (0x0202, 0x021F));
+}
+
+#[test]
 fn psg_dda_mode_outputs_direct_level() {
     let mut bus = Bus::new();
 

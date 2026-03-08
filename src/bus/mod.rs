@@ -48,7 +48,7 @@ mod types;
 use self::types::TransientU64;
 use self::types::{
     BankMapping, ControlRegister, IoPort, PaletteFlickerEvent, Timer, TransientBool, TransientBram,
-    TransientPaletteFlicker, VdcPort,
+    TransientPaletteFlicker, TransientUsize, VdcPort,
 };
 use font::FONT;
 
@@ -100,7 +100,7 @@ pub struct Bus {
     video_output_enabled: TransientBool,
     current_display_width: usize,
     current_display_height: usize,
-    current_display_x_offset: usize,
+    current_display_x_offset: TransientUsize,
     current_display_y_offset: usize,
     bg_opaque: Vec<bool>,
     bg_priority: Vec<bool>,
@@ -112,6 +112,53 @@ pub struct Bus {
     /// ready).  This matches CRT behavior where the brief sprite flash during
     /// scene transitions is invisible due to phosphor response/blanking.
     /// Not serialized — transient render state, safe to default to false.
+    burst_transition: TransientBool,
+    #[cfg(feature = "trace_hw_writes")]
+    last_pc_for_trace: Option<u16>,
+    #[cfg(debug_assertions)]
+    debug_force_ds_after: TransientU64,
+    #[cfg(feature = "trace_hw_writes")]
+    st0_lock_window: u8,
+}
+
+#[derive(Clone, bincode::Encode, bincode::Decode)]
+pub(crate) struct CompatBusStateV1 {
+    ram: Vec<u8>,
+    rom: Vec<u8>,
+    banks: [BankMapping; NUM_BANKS],
+    mpr: [u8; NUM_BANKS],
+    st_ports: [u8; 3],
+    io: [u8; IO_REG_SIZE],
+    io_port: IoPort,
+    interrupt_disable: u8,
+    interrupt_request: u8,
+    timer: Timer,
+    vdc: crate::vdc::CompatVdcStateV1,
+    psg: Psg,
+    vce: Vce,
+    audio_phi_accumulator: u64,
+    audio_psg_accumulator: TransientU64,
+    audio_buffer: Vec<i16>,
+    audio_total_phi_cycles: TransientU64,
+    audio_total_generated_samples: TransientU64,
+    audio_total_drained_samples: TransientU64,
+    audio_total_drain_calls: TransientU64,
+    cpu_vdc_vce_penalty_cycles: TransientU64,
+    cpu_high_speed_hint: TransientBool,
+    vce_palette_flicker: TransientPaletteFlicker,
+    framebuffer: Vec<u32>,
+    frame_ready: bool,
+    cart_ram: Vec<u8>,
+    bram: TransientBram,
+    bram_unlocked: TransientBool,
+    video_output_enabled: TransientBool,
+    current_display_width: usize,
+    current_display_height: usize,
+    current_display_x_offset: usize,
+    current_display_y_offset: usize,
+    bg_opaque: Vec<bool>,
+    bg_priority: Vec<bool>,
+    sprite_line_counts: Vec<u8>,
     burst_transition: TransientBool,
     #[cfg(feature = "trace_hw_writes")]
     last_pc_for_trace: Option<u16>,
@@ -155,7 +202,7 @@ impl Bus {
             video_output_enabled: TransientBool(true),
             current_display_width: 256,
             current_display_height: 224,
-            current_display_x_offset: 0,
+            current_display_x_offset: TransientUsize(0),
             current_display_y_offset: 0,
             bg_opaque: vec![false; FRAME_WIDTH * FRAME_HEIGHT],
             bg_priority: vec![false; FRAME_WIDTH * FRAME_HEIGHT],
@@ -449,7 +496,7 @@ impl Bus {
         self.video_output_enabled = TransientBool(true);
         self.current_display_width = 256;
         self.current_display_height = 224;
-        self.current_display_x_offset = 0;
+        self.current_display_x_offset = TransientUsize(0);
         self.current_display_y_offset = 0;
         self.bg_opaque.fill(false);
         self.bg_priority.fill(false);
@@ -515,6 +562,29 @@ impl Bus {
         for idx in 0..NUM_BANKS {
             self.update_mpr(idx);
         }
+    }
+
+    pub(crate) fn post_load_fixup(&mut self) {
+        self.audio_phi_accumulator = 0;
+        self.cpu_vdc_vce_penalty_cycles = TransientU64(0);
+        self.cpu_high_speed_hint = TransientBool(false);
+        self.vce_palette_flicker.0.clear();
+        self.audio_psg_accumulator = TransientU64(0);
+        self.audio_buffer.clear();
+        self.audio_total_phi_cycles = TransientU64(0);
+        self.audio_total_generated_samples = TransientU64(0);
+        self.audio_total_drained_samples = TransientU64(0);
+        self.audio_total_drain_calls = TransientU64(0);
+        self.bram_unlocked = TransientBool(false);
+        self.video_output_enabled = TransientBool(true);
+        self.frame_ready = false;
+        self.current_display_x_offset = TransientUsize(0);
+        self.bg_opaque.fill(false);
+        self.bg_priority.fill(false);
+        self.sprite_line_counts.fill(0);
+        self.psg.post_load_fixup();
+        self.vdc.post_load_fixup();
+        self.refresh_vdc_irq();
     }
 
     pub fn mpr(&self, index: usize) -> u8 {
@@ -951,7 +1021,7 @@ impl Bus {
         }
         let w = self.current_display_width;
         let h = self.current_display_height;
-        let x_off = self.current_display_x_offset;
+        let x_off = *self.current_display_x_offset;
         let y_off = self.current_display_y_offset;
         let needed = w * h;
         buf.resize(needed, 0);
@@ -982,7 +1052,7 @@ impl Bus {
         }
         let w = self.current_display_width;
         let h = self.current_display_height;
-        let x_off = self.current_display_x_offset;
+        let x_off = *self.current_display_x_offset;
         let y_off = self.current_display_y_offset;
         let mut out = vec![0u32; w * h];
         for y in 0..h {
@@ -1529,6 +1599,107 @@ impl Bus {
             mask |= IRQ_REQUEST_TIMER;
         }
         mask
+    }
+}
+
+impl From<CompatBusStateV1> for Bus {
+    fn from(value: CompatBusStateV1) -> Self {
+        Self {
+            ram: value.ram,
+            rom: value.rom,
+            banks: value.banks,
+            mpr: value.mpr,
+            st_ports: value.st_ports,
+            io: value.io,
+            io_port: value.io_port,
+            interrupt_disable: value.interrupt_disable,
+            interrupt_request: value.interrupt_request,
+            timer: value.timer,
+            vdc: value.vdc.into(),
+            psg: value.psg,
+            vce: value.vce,
+            audio_phi_accumulator: value.audio_phi_accumulator,
+            audio_psg_accumulator: value.audio_psg_accumulator,
+            audio_buffer: value.audio_buffer,
+            audio_total_phi_cycles: value.audio_total_phi_cycles,
+            audio_total_generated_samples: value.audio_total_generated_samples,
+            audio_total_drained_samples: value.audio_total_drained_samples,
+            audio_total_drain_calls: value.audio_total_drain_calls,
+            cpu_vdc_vce_penalty_cycles: value.cpu_vdc_vce_penalty_cycles,
+            cpu_high_speed_hint: value.cpu_high_speed_hint,
+            vce_palette_flicker: value.vce_palette_flicker,
+            framebuffer: value.framebuffer,
+            frame_ready: value.frame_ready,
+            cart_ram: value.cart_ram,
+            bram: value.bram,
+            bram_unlocked: value.bram_unlocked,
+            video_output_enabled: value.video_output_enabled,
+            current_display_width: value.current_display_width,
+            current_display_height: value.current_display_height,
+            current_display_x_offset: TransientUsize(value.current_display_x_offset),
+            current_display_y_offset: value.current_display_y_offset,
+            bg_opaque: value.bg_opaque,
+            bg_priority: value.bg_priority,
+            sprite_line_counts: value.sprite_line_counts,
+            burst_transition: value.burst_transition,
+            #[cfg(feature = "trace_hw_writes")]
+            last_pc_for_trace: value.last_pc_for_trace,
+            #[cfg(debug_assertions)]
+            debug_force_ds_after: value.debug_force_ds_after,
+            #[cfg(feature = "trace_hw_writes")]
+            st0_lock_window: value.st0_lock_window,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Bus {
+    pub(crate) fn compat_state_v1(&self) -> CompatBusStateV1 {
+        CompatBusStateV1 {
+            ram: self.ram.clone(),
+            rom: self.rom.clone(),
+            banks: self.banks,
+            mpr: self.mpr,
+            st_ports: self.st_ports,
+            io: self.io,
+            io_port: self.io_port,
+            interrupt_disable: self.interrupt_disable,
+            interrupt_request: self.interrupt_request,
+            timer: self.timer,
+            vdc: self.vdc.compat_state_v1(),
+            psg: self.psg.clone(),
+            vce: self.vce.clone(),
+            audio_phi_accumulator: self.audio_phi_accumulator,
+            audio_psg_accumulator: self.audio_psg_accumulator,
+            audio_buffer: self.audio_buffer.clone(),
+            audio_total_phi_cycles: self.audio_total_phi_cycles,
+            audio_total_generated_samples: self.audio_total_generated_samples,
+            audio_total_drained_samples: self.audio_total_drained_samples,
+            audio_total_drain_calls: self.audio_total_drain_calls,
+            cpu_vdc_vce_penalty_cycles: self.cpu_vdc_vce_penalty_cycles,
+            cpu_high_speed_hint: self.cpu_high_speed_hint,
+            vce_palette_flicker: self.vce_palette_flicker.clone(),
+            framebuffer: self.framebuffer.clone(),
+            frame_ready: self.frame_ready,
+            cart_ram: self.cart_ram.clone(),
+            bram: self.bram.clone(),
+            bram_unlocked: self.bram_unlocked,
+            video_output_enabled: self.video_output_enabled,
+            current_display_width: self.current_display_width,
+            current_display_height: self.current_display_height,
+            current_display_x_offset: *self.current_display_x_offset,
+            current_display_y_offset: self.current_display_y_offset,
+            bg_opaque: self.bg_opaque.clone(),
+            bg_priority: self.bg_priority.clone(),
+            sprite_line_counts: self.sprite_line_counts.clone(),
+            burst_transition: self.burst_transition,
+            #[cfg(feature = "trace_hw_writes")]
+            last_pc_for_trace: self.last_pc_for_trace,
+            #[cfg(debug_assertions)]
+            debug_force_ds_after: self.debug_force_ds_after,
+            #[cfg(feature = "trace_hw_writes")]
+            st0_lock_window: self.st0_lock_window,
+        }
     }
 }
 

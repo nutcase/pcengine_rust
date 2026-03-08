@@ -59,6 +59,110 @@ pub(crate) struct VerticalWindow {
     pub(crate) vblank_start_line: usize,
 }
 
+#[derive(Clone)]
+pub(crate) struct TransientLineU16(pub(crate) [u16; LINES_PER_FRAME as usize]);
+
+impl Default for TransientLineU16 {
+    fn default() -> Self {
+        Self([0; LINES_PER_FRAME as usize])
+    }
+}
+
+impl bincode::Encode for TransientLineU16 {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        _encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        Ok(())
+    }
+}
+
+impl<Context> bincode::Decode<Context> for TransientLineU16 {
+    fn decode<D: bincode::de::Decoder>(
+        _decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(Self::default())
+    }
+}
+
+impl<'de, Context> bincode::BorrowDecode<'de, Context> for TransientLineU16 {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+        _decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(Self::default())
+    }
+}
+
+impl core::ops::Deref for TransientLineU16 {
+    type Target = [u16; LINES_PER_FRAME as usize];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for TransientLineU16 {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[derive(Clone, bincode::Encode, bincode::Decode)]
+pub(crate) struct CompatVdcStateV1 {
+    pub(crate) registers: [u16; VDC_REGISTER_COUNT],
+    pub(crate) vdc_data: [u16; VDC_REGISTER_COUNT],
+    pub(crate) vram: Vec<u16>,
+    pub(crate) satb: [u16; 0x100],
+    pub(crate) selected: u8,
+    pub(crate) latch_low: u8,
+    pub(crate) write_phase: VdcWritePhase,
+    pub(crate) read_phase: VdcReadPhase,
+    pub(crate) read_buffer: u16,
+    pub(crate) mawr: u16,
+    pub(crate) marr: u16,
+    pub(crate) status: u8,
+    pub(crate) phi_scaled: u64,
+    pub(crate) busy_cycles: u32,
+    pub(crate) scanline: u16,
+    pub(crate) dma_control: u16,
+    pub(crate) dma_source: u16,
+    pub(crate) dma_destination: u16,
+    pub(crate) satb_source: u16,
+    pub(crate) satb_pending: bool,
+    pub(crate) satb_written: bool,
+    pub(crate) in_vblank: bool,
+    pub(crate) frame_trigger: bool,
+    pub(crate) scroll_x: u16,
+    pub(crate) scroll_y: u16,
+    pub(crate) scroll_x_pending: u16,
+    pub(crate) scroll_y_pending: u16,
+    pub(crate) scroll_x_dirty: bool,
+    pub(crate) scroll_y_dirty: bool,
+    pub(crate) bg_y_offset: u16,
+    pub(crate) bg_y_offset_loaded: bool,
+    pub(crate) zoom_x: u16,
+    pub(crate) zoom_y: u16,
+    pub(crate) zoom_x_pending: u16,
+    pub(crate) zoom_y_pending: u16,
+    pub(crate) zoom_x_dirty: bool,
+    pub(crate) zoom_y_dirty: bool,
+    pub(crate) scroll_line_x: [u16; LINES_PER_FRAME as usize],
+    pub(crate) scroll_line_y: [u16; LINES_PER_FRAME as usize],
+    pub(crate) scroll_line_y_offset: [u16; LINES_PER_FRAME as usize],
+    pub(crate) zoom_line_x: [u16; LINES_PER_FRAME as usize],
+    pub(crate) zoom_line_y: [u16; LINES_PER_FRAME as usize],
+    pub(crate) control_line: [u16; LINES_PER_FRAME as usize],
+    pub(crate) hsr_line: [u16; LINES_PER_FRAME as usize],
+    pub(crate) hdr_line: [u16; LINES_PER_FRAME as usize],
+    pub(crate) scroll_line_valid: [bool; LINES_PER_FRAME as usize],
+    pub(crate) vram_dma_request: bool,
+    pub(crate) cram_pending: bool,
+    pub(crate) render_control_latch: u16,
+    pub(crate) ignore_next_high_byte: bool,
+    pub(crate) pending_write_register: Option<u8>,
+    pub(crate) st0_locked_until_commit: bool,
+    pub(crate) rcr_post_isr_line: Option<u16>,
+}
+
 #[derive(Clone, bincode::Encode, bincode::Decode)]
 pub(crate) struct Vdc {
     pub(crate) registers: [u16; VDC_REGISTER_COUNT],
@@ -111,8 +215,8 @@ pub(crate) struct Vdc {
     pub(crate) zoom_line_x: [u16; LINES_PER_FRAME as usize],
     pub(crate) zoom_line_y: [u16; LINES_PER_FRAME as usize],
     pub(crate) control_line: [u16; LINES_PER_FRAME as usize],
-    pub(crate) hsr_line: [u16; LINES_PER_FRAME as usize],
-    pub(crate) hdr_line: [u16; LINES_PER_FRAME as usize],
+    pub(crate) hsr_line: TransientLineU16,
+    pub(crate) hdr_line: TransientLineU16,
     pub(crate) scroll_line_valid: [bool; LINES_PER_FRAME as usize],
     pub(crate) vram_dma_request: bool,
     pub(crate) cram_pending: bool,
@@ -215,8 +319,8 @@ impl Vdc {
             zoom_line_x: [0; LINES_PER_FRAME as usize],
             zoom_line_y: [0; LINES_PER_FRAME as usize],
             control_line: [0; LINES_PER_FRAME as usize],
-            hsr_line: [0; LINES_PER_FRAME as usize],
-            hdr_line: [0; LINES_PER_FRAME as usize],
+            hsr_line: TransientLineU16::default(),
+            hdr_line: TransientLineU16::default(),
             scroll_line_valid: [false; LINES_PER_FRAME as usize],
             vram_dma_request: false,
             cram_pending: false,
@@ -299,8 +403,8 @@ impl Vdc {
         self.zoom_line_x = [0; LINES_PER_FRAME as usize];
         self.zoom_line_y = [0; LINES_PER_FRAME as usize];
         self.control_line = [0; LINES_PER_FRAME as usize];
-        self.hsr_line = [0; LINES_PER_FRAME as usize];
-        self.hdr_line = [0; LINES_PER_FRAME as usize];
+        self.hsr_line = TransientLineU16::default();
+        self.hdr_line = TransientLineU16::default();
         self.scroll_line_valid = [false; LINES_PER_FRAME as usize];
         self.vram_dma_request = false;
         self.cram_pending = false;
@@ -342,6 +446,16 @@ impl Vdc {
 
     pub(crate) fn satb_pending(&self) -> bool {
         self.satb_written || self.satb_pending
+    }
+
+    pub(crate) fn post_load_fixup(&mut self) {
+        // hsr_line/hdr_line are transient render caches. After decoding a
+        // current save state they come back zeroed, so any persisted
+        // scroll_line_valid bits would incorrectly suppress re-latching.
+        self.hsr_line = TransientLineU16::default();
+        self.hdr_line = TransientLineU16::default();
+        self.scroll_line_valid.fill(false);
+        self.refresh_activity_flags();
     }
 
     pub(crate) fn satb_source(&self) -> u16 {
@@ -1433,5 +1547,134 @@ impl Vdc {
 
     pub(crate) fn scroll_line_valid(&self, line: usize) -> bool {
         self.scroll_line_valid.get(line).copied().unwrap_or(false)
+    }
+}
+
+impl From<CompatVdcStateV1> for Vdc {
+    fn from(value: CompatVdcStateV1) -> Self {
+        Self {
+            registers: value.registers,
+            vdc_data: value.vdc_data,
+            vram: value.vram,
+            satb: value.satb,
+            selected: value.selected,
+            latch_low: value.latch_low,
+            write_phase: value.write_phase,
+            read_phase: value.read_phase,
+            read_buffer: value.read_buffer,
+            mawr: value.mawr,
+            marr: value.marr,
+            status: value.status,
+            phi_scaled: value.phi_scaled,
+            busy_cycles: value.busy_cycles,
+            scanline: value.scanline,
+            dma_control: value.dma_control,
+            dma_source: value.dma_source,
+            dma_destination: value.dma_destination,
+            satb_source: value.satb_source,
+            satb_pending: value.satb_pending,
+            satb_written: value.satb_written,
+            in_vblank: value.in_vblank,
+            frame_trigger: value.frame_trigger,
+            scroll_x: value.scroll_x,
+            scroll_y: value.scroll_y,
+            scroll_x_pending: value.scroll_x_pending,
+            scroll_y_pending: value.scroll_y_pending,
+            scroll_x_dirty: value.scroll_x_dirty,
+            scroll_y_dirty: value.scroll_y_dirty,
+            bg_y_offset: value.bg_y_offset,
+            bg_y_offset_loaded: value.bg_y_offset_loaded,
+            zoom_x: value.zoom_x,
+            zoom_y: value.zoom_y,
+            zoom_x_pending: value.zoom_x_pending,
+            zoom_y_pending: value.zoom_y_pending,
+            zoom_x_dirty: value.zoom_x_dirty,
+            zoom_y_dirty: value.zoom_y_dirty,
+            scroll_line_x: value.scroll_line_x,
+            scroll_line_y: value.scroll_line_y,
+            scroll_line_y_offset: value.scroll_line_y_offset,
+            zoom_line_x: value.zoom_line_x,
+            zoom_line_y: value.zoom_line_y,
+            control_line: value.control_line,
+            hsr_line: TransientLineU16(value.hsr_line),
+            hdr_line: TransientLineU16(value.hdr_line),
+            scroll_line_valid: value.scroll_line_valid,
+            vram_dma_request: value.vram_dma_request,
+            cram_pending: value.cram_pending,
+            render_control_latch: value.render_control_latch,
+            ignore_next_high_byte: value.ignore_next_high_byte,
+            pending_write_register: value.pending_write_register,
+            #[cfg(feature = "trace_hw_writes")]
+            pending_traced_register: None,
+            #[cfg(feature = "trace_hw_writes")]
+            last_io_addr: 0,
+            #[cfg(feature = "trace_hw_writes")]
+            st0_hold_counter: 0,
+            #[cfg(feature = "trace_hw_writes")]
+            st0_hold_addr_hist: [0; 0x100],
+            st0_locked_until_commit: value.st0_locked_until_commit,
+            rcr_post_isr_line: value.rcr_post_isr_line,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Vdc {
+    pub(crate) fn compat_state_v1(&self) -> CompatVdcStateV1 {
+        CompatVdcStateV1 {
+            registers: self.registers,
+            vdc_data: self.vdc_data,
+            vram: self.vram.clone(),
+            satb: self.satb,
+            selected: self.selected,
+            latch_low: self.latch_low,
+            write_phase: self.write_phase,
+            read_phase: self.read_phase,
+            read_buffer: self.read_buffer,
+            mawr: self.mawr,
+            marr: self.marr,
+            status: self.status,
+            phi_scaled: self.phi_scaled,
+            busy_cycles: self.busy_cycles,
+            scanline: self.scanline,
+            dma_control: self.dma_control,
+            dma_source: self.dma_source,
+            dma_destination: self.dma_destination,
+            satb_source: self.satb_source,
+            satb_pending: self.satb_pending,
+            satb_written: self.satb_written,
+            in_vblank: self.in_vblank,
+            frame_trigger: self.frame_trigger,
+            scroll_x: self.scroll_x,
+            scroll_y: self.scroll_y,
+            scroll_x_pending: self.scroll_x_pending,
+            scroll_y_pending: self.scroll_y_pending,
+            scroll_x_dirty: self.scroll_x_dirty,
+            scroll_y_dirty: self.scroll_y_dirty,
+            bg_y_offset: self.bg_y_offset,
+            bg_y_offset_loaded: self.bg_y_offset_loaded,
+            zoom_x: self.zoom_x,
+            zoom_y: self.zoom_y,
+            zoom_x_pending: self.zoom_x_pending,
+            zoom_y_pending: self.zoom_y_pending,
+            zoom_x_dirty: self.zoom_x_dirty,
+            zoom_y_dirty: self.zoom_y_dirty,
+            scroll_line_x: self.scroll_line_x,
+            scroll_line_y: self.scroll_line_y,
+            scroll_line_y_offset: self.scroll_line_y_offset,
+            zoom_line_x: self.zoom_line_x,
+            zoom_line_y: self.zoom_line_y,
+            control_line: self.control_line,
+            hsr_line: self.hsr_line.0,
+            hdr_line: self.hdr_line.0,
+            scroll_line_valid: self.scroll_line_valid,
+            vram_dma_request: self.vram_dma_request,
+            cram_pending: self.cram_pending,
+            render_control_latch: self.render_control_latch,
+            ignore_next_high_byte: self.ignore_next_high_byte,
+            pending_write_register: self.pending_write_register,
+            st0_locked_until_commit: self.st0_locked_until_commit,
+            rcr_post_isr_line: self.rcr_post_isr_line,
+        }
     }
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::bus::PAGE_SIZE;
+use crate::vdc::VDC_VBLANK_INTERVAL;
 use hucard::{HUCARD_HEADER_SIZE, HUCARD_MAGIC_HI, HUCARD_MAGIC_LO, HUCARD_TYPE_PCE, HucardHeader};
 
 #[test]
@@ -176,4 +177,101 @@ fn load_state_accepts_legacy_truncated_payload() {
     let _ = std::fs::remove_file(&path);
 
     assert!(load_result.is_ok(), "legacy-compatible load should succeed");
+}
+
+#[test]
+fn load_state_accepts_previous_render_cache_layout() {
+    let mut emu = Emulator::new();
+    let program = [0xA9, 0x42, 0x8D, 0x00, 0x20, 0x00];
+    emu.load_program(0xC000, &program);
+    emu.reset();
+    emu.run_until_halt(Some(64));
+
+    emu.bus.write_u16(0x2002, 0xBEEF);
+    emu.bus.set_mpr(3, 0xFB);
+    emu.bus.write_st_port(0, 0x0A);
+    emu.bus.write_st_port(1, 0x34);
+    emu.bus.write_st_port(2, 0x12);
+    emu.bus.write_st_port(0, 0x0B);
+    emu.bus.write_st_port(1, 0x78);
+    emu.bus.write_st_port(2, 0x56);
+
+    let compat = CompatEmulatorStateV1 {
+        cpu: emu.cpu.clone(),
+        bus: emu.bus.compat_state_v1(),
+        cycles: emu.cycles,
+        audio_buffer: emu.audio_buffer.clone(),
+        audio_batch_size: emu.audio_batch_size,
+    };
+
+    let bytes = bincode::encode_to_vec(&compat, bincode::config::standard()).unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "pce_prev_layout_{}_{}.state",
+        std::process::id(),
+        emu.cycles()
+    ));
+    std::fs::write(&path, &bytes).unwrap();
+
+    let mut restored = Emulator::new();
+    let load_result = restored.load_state_from_file(&path);
+    let _ = std::fs::remove_file(&path);
+
+    assert!(load_result.is_ok(), "compat load should succeed");
+    assert_eq!(restored.cpu.pc, emu.cpu.pc);
+    assert_eq!(restored.cycles(), emu.cycles());
+    assert_eq!(restored.bus.read(0x2002), 0xEF);
+    assert_eq!(restored.bus.read(0x2003), 0xBE);
+    assert_eq!(restored.bus.mpr(3), 0xFB);
+    assert_eq!(restored.bus.vdc_register(0x0A), Some(0x1234));
+    assert_eq!(restored.bus.vdc_register(0x0B), Some(0x5678));
+}
+
+#[test]
+fn load_state_invalidates_current_render_cache_round_trip() {
+    let mut emu = Emulator::new();
+    emu.bus.write_st_port(0, 0x0A);
+    emu.bus.write_st_port(1, 0x02);
+    emu.bus.write_st_port(2, 0x02);
+    emu.bus.write_st_port(0, 0x0B);
+    emu.bus.write_st_port(1, 0x1F);
+    emu.bus.write_st_port(2, 0x02);
+    emu.bus.tick(40_000, false);
+
+    assert!(emu.bus.vdc_scroll_line_valid(0));
+
+    let path = std::env::temp_dir().join(format!(
+        "pce_current_roundtrip_{}_{}.state",
+        std::process::id(),
+        emu.cycles()
+    ));
+    emu.save_state_to_file(&path).unwrap();
+
+    let mut restored = Emulator::new();
+    let load_result = restored.load_state_from_file(&path);
+    let _ = std::fs::remove_file(&path);
+
+    assert!(
+        load_result.is_ok(),
+        "current round-trip load should succeed"
+    );
+    assert_eq!(restored.bus.vdc_register(0x0A), Some(0x0202));
+    assert_eq!(restored.bus.vdc_register(0x0B), Some(0x021F));
+    assert!(
+        !restored.bus.vdc_scroll_line_valid(0),
+        "transient line cache must be invalidated after load"
+    );
+    assert!(
+        restored.take_frame().is_none(),
+        "stale serialized frame should not be presented after load"
+    );
+
+    let mut fresh_frame = false;
+    for _ in 0..4 {
+        restored.bus.tick(VDC_VBLANK_INTERVAL, false);
+        if restored.take_frame().is_some() {
+            fresh_frame = true;
+            break;
+        }
+    }
+    assert!(fresh_frame, "loaded emulator should produce a fresh frame");
 }

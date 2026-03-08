@@ -86,6 +86,48 @@ impl core::ops::DerefMut for TransientU64 {
     }
 }
 
+/// A `usize` wrapper excluded from save-state serialization.
+#[derive(Clone, Copy, Default)]
+pub(super) struct TransientUsize(pub(super) usize);
+
+impl bincode::Encode for TransientUsize {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        _encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        Ok(())
+    }
+}
+
+impl<Context> bincode::Decode<Context> for TransientUsize {
+    fn decode<D: bincode::de::Decoder>(
+        _decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(Self(0))
+    }
+}
+
+impl<'de, Context> bincode::BorrowDecode<'de, Context> for TransientUsize {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de>>(
+        _decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(Self(0))
+    }
+}
+
+impl core::ops::Deref for TransientUsize {
+    type Target = usize;
+    fn deref(&self) -> &usize {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for TransientUsize {
+    fn deref_mut(&mut self) -> &mut usize {
+        &mut self.0
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub(super) struct PaletteFlickerEvent {
     pub(super) row: usize,

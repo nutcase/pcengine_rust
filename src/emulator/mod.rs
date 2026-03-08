@@ -4,7 +4,7 @@ mod hucard;
 #[cfg(test)]
 mod tests;
 
-use crate::bus::{Bus, IRQ_REQUEST_TIMER};
+use crate::bus::{Bus, CompatBusStateV1, IRQ_REQUEST_TIMER};
 use crate::cpu::Cpu;
 use crate::debugger::{DebugBreak, DebugTick, Debugger};
 use hucard::{ParsedHuCard, RESET_VECTOR_LEGACY, RESET_VECTOR_PRIMARY};
@@ -14,6 +14,15 @@ use std::error::Error;
 pub struct Emulator {
     pub cpu: Cpu,
     pub bus: Bus,
+    cycles: u64,
+    audio_buffer: Vec<i16>,
+    audio_batch_size: usize,
+}
+
+#[derive(Clone, bincode::Encode, bincode::Decode)]
+struct CompatEmulatorStateV1 {
+    cpu: Cpu,
+    bus: CompatBusStateV1,
     cycles: u64,
     audio_buffer: Vec<i16>,
     audio_batch_size: usize,
@@ -182,7 +191,23 @@ impl Emulator {
     ) -> Result<(), Box<dyn Error>> {
         let bytes = std::fs::read(path)?;
         let config = bincode::config::standard();
-        let (mut state, _): (Emulator, usize) = match bincode::decode_from_slice(&bytes, config) {
+        if let Ok((state, used)) = bincode::decode_from_slice::<Emulator, _>(&bytes, config) {
+            if used == bytes.len() {
+                self.adopt_loaded_state(state);
+                return Ok(());
+            }
+        }
+
+        if let Ok((state, used)) =
+            bincode::decode_from_slice::<CompatEmulatorStateV1, _>(&bytes, config)
+        {
+            if used == bytes.len() {
+                self.adopt_loaded_state(state.into());
+                return Ok(());
+            }
+        }
+
+        let (state, _): (Emulator, usize) = match bincode::decode_from_slice(&bytes, config) {
             Ok(decoded) => decoded,
             Err(bincode::error::DecodeError::UnexpectedEnd { additional }) => {
                 // Backward-compatibility path for older state files that are
@@ -194,14 +219,7 @@ impl Emulator {
             }
             Err(err) => return Err(Box::new(err)),
         };
-        // Keep front-end configured batch size and discard stale queued audio.
-        // Recompute bank mappings from MPRs so legacy enum-tag differences in
-        // serialized `BankMapping` do not affect restored state.
-        state.bus.rebuild_mpr_mappings();
-        state.audio_batch_size = self.audio_batch_size;
-        state.audio_buffer.clear();
-        let _ = state.bus.take_audio_samples();
-        *self = state;
+        self.adopt_loaded_state(state);
         Ok(())
     }
 
@@ -291,5 +309,26 @@ impl Emulator {
 
     pub fn work_ram_mut(&mut self) -> &mut [u8] {
         self.bus.work_ram_mut()
+    }
+
+    fn adopt_loaded_state(&mut self, mut state: Emulator) {
+        state.bus.rebuild_mpr_mappings();
+        state.bus.post_load_fixup();
+        state.audio_batch_size = self.audio_batch_size;
+        state.audio_buffer.clear();
+        let _ = state.bus.take_audio_samples();
+        *self = state;
+    }
+}
+
+impl From<CompatEmulatorStateV1> for Emulator {
+    fn from(value: CompatEmulatorStateV1) -> Self {
+        Self {
+            cpu: value.cpu,
+            bus: value.bus.into(),
+            cycles: value.cycles,
+            audio_buffer: value.audio_buffer,
+            audio_batch_size: value.audio_batch_size,
+        }
     }
 }
