@@ -3,6 +3,11 @@ name = "pce"
 version = "0.1.0"
 edition = "2024"
 
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "debuginfo"
+
 [features]
 default = []
 audio-sdl = ["sdl2"]

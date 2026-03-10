@@ -2,3 +2,19 @@
 # CMake 4.x dropped compatibility defaults for projects with very old
 # cmake_minimum_required(). sdl2-sys (bundled SDL) needs this policy floor.
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
+[target.aarch64-apple-darwin]
+# Optimize for the local Apple Silicon machine when building natively.
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-apple-darwin]
+# Optimize for the local Intel Mac when building natively.
+rustflags = ["-C", "target-cpu=native"]
+
+[target.aarch64-unknown-linux-gnu]
+# Optimize for the local ARM64 Linux machine when building natively.
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-unknown-linux-gnu]
+# Optimize for the local x86_64 Linux machine when building natively.
+rustflags = ["-C", "target-cpu=native"]
